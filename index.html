@@ -287,7 +287,7 @@ function BrainDump({onClose,onAddTasks,apiKey}){
     if(!apiKey){setResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
     setLoading(true);
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:`用户现在脑子很乱，把以下内容分类整理成JSON。分为：tasks（需要做的事，数组，每项有title字符串）、worries（担忧/焦虑，数组字符串）、ideas（想法/灵感，数组字符串）。只返回JSON，不要其他文字。\n\n用户内容：${text}`}]}]}),
       });
@@ -623,12 +623,12 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
   useEffect(()=>{if(sendRef)sendRef.current=(task)=>send(`帮我把这个任务拆成3-5个具体小步骤：${task.title}`,task.id);});
   function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
   async function send(text,btid){
-    if(!text||loading)return;
+    if(!text||!text.trim()||loading)return;
     if(!apiKey){setShowKey(true);return;}
     const msg=text.trim();setInput("");setMsgs(m=>[...m,{role:"user",text:msg}]);setLoading(true);
     const ctx=tasks.filter(t=>!t.done).map(t=>`- ${t.title}（${getProj(t.project).name}，${t.priority}）`).join("\n");
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:`你是一个ADHD专属效率助手。风格：简短有力，具体可执行，多用emoji鼓励，不说教。用户当前待办：\n${ctx}\n\n拆解任务时每步用"•"开头，控制在3-5步，每步要荒谬地简单。\n\n用户：${msg}`}]}]}),
       });
@@ -662,8 +662,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
       {loading&&<div style={{fontSize:13,color:"#aaa",fontStyle:"italic"}} className="pulse">思考中…</div>}
     </div>
     <div style={{padding:12,borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
-      <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send(input)} placeholder="问我任何事…" style={{flex:1,fontSize:13,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6}}/>
-      <button onClick={()=>send(input)} style={{fontSize:13,padding:"7px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,cursor:"pointer"}}>发送</button>
+      <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&input.trim()){const v=input;setInput("");send(v);}}} placeholder="问我任何事…" style={{flex:1,fontSize:13,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6}}/>
+      <button onClick={()=>{const v=input;setInput("");send(v);}} style={{fontSize:13,padding:"7px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,cursor:"pointer"}}>发送</button>
     </div>
   </div>;
 }
@@ -732,7 +732,7 @@ const BLANK_COURSE={
   totalEpisodes:0,episodes:[],
   notes:[],assignments:[],
   active:true,archived:false,
-  lastStudied:null,createdAt:"",
+  lastStudied:todayStr(),createdAt:"",
   color:"#185FA5",
 };
 
@@ -852,7 +852,7 @@ function NoteCard({note,onAISummarize,geminiKey,onDelete}){
     if(!geminiKey||!note.content)return;
     setLoading(true);
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:`你是一个学习助手。从以下笔记中提炼：1）3个核心要点（每点一句话，用"•"开头）2）1个立即可执行的行动项（用"→"开头）。只返回这4行，不要其他内容。\n\n笔记：${note.content}`}]}]}),
       });
@@ -931,8 +931,54 @@ function AddNoteModal({courseId,episodeId,onSave,onClose}){
   </div>;
 }
 
+
+// ── Edit Course Modal ──
+function EditCourseModal({course,onSave,onClose}){
+  const COLORS=["#185FA5","#0F6E56","#993C1D","#854F0B","#533AB7","#fb7299"];
+  const [f,setF]=useState({
+    title:course.title,
+    platform:course.platform,
+    link:course.link||"",
+    totalEpisodes:course.totalEpisodes||"",
+    color:course.color||"#185FA5",
+  });
+  function save(){
+    if(!f.title.trim())return;
+    onSave({...course,...f,totalEpisodes:parseInt(f.totalEpisodes)||0});
+    onClose();
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}}>
+      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between"}}>
+        <span style={{fontSize:15,fontWeight:500}}>编辑课程</span>
+        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+        {[
+          ["课程名称",<input key="t" value={f.title} onChange={e=>setF(x=>({...x,title:e.target.value}))} autoFocus style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+          ["平台",<select key="p" value={f.platform} onChange={e=>setF(x=>({...x,platform:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>{PLATFORMS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>],
+          ["课程链接",<input key="l" value={f.link} onChange={e=>setF(x=>({...x,link:e.target.value}))} placeholder="https://..." style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+          ["总集数",<input key="e" type="number" value={f.totalEpisodes} onChange={e=>setF(x=>({...x,totalEpisodes:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+        ].map(([l,el])=><div key={l}><div style={{fontSize:12,color:"#aaa",marginBottom:4}}>{l}</div>{el}</div>)}
+        <div>
+          <div style={{fontSize:12,color:"#aaa",marginBottom:6}}>颜色标签</div>
+          <div style={{display:"flex",gap:8}}>{COLORS.map(c=><div key={c} onClick={()=>setF(x=>({...x,color:c}))} style={{width:24,height:24,borderRadius:"50%",background:c,cursor:"pointer",border:f.color===c?"3px solid #1a1a1a":"3px solid transparent"}}/>)}</div>
+        </div>
+      </div>
+      <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:12,color:"#aaa"}}>章节列表在课程详情里编辑</span>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={onClose} style={{padding:"7px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+          <button onClick={save} style={{padding:"7px 16px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>保存</button>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
 // ── Course Detail ──
 function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
+  const [showEdit,setShowEdit]=useState(false);
   const [showAddNote,setShowAddNote]=useState(false);
   const [showAddEp,setShowAddEp]=useState(false);
   const [newEpTitle,setNewEpTitle]=useState("");
@@ -1002,10 +1048,13 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <span style={{fontSize:12,padding:"2px 8px",borderRadius:10,background:PLATFORMS.find(p=>p.id===course.platform)?.color+"22",color:PLATFORMS.find(p=>p.id===course.platform)?.color}}>{PLATFORMS.find(p=>p.id===course.platform)?.name}</span>
               {course.link&&<a href={course.link} target="_blank" style={{fontSize:12,color:"#185FA5"}}>打开课程↗</a>}
-              {daysSinceStudy>14&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"2px 8px",borderRadius:10}}>⚠ {daysSinceStudy}天没学了</span>}
+              {daysSinceStudy>14&&course.lastStudied&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"2px 8px",borderRadius:10}}>⚠ {daysSinceStudy}天没学了</span>}
             </div>
           </div>
-          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <button onClick={()=>setShowEdit(true)} style={{fontSize:12,color:"#666",background:"none",border:"0.5px solid #e0ddd6",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>编辑</button>
+            <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+          </div>
         </div>
         <div style={{marginTop:12}}>
           <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#888",marginBottom:4}}>
@@ -1079,6 +1128,7 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
         {(course.assignments||[]).length===0&&<div style={{fontSize:13,color:"#ccc",textAlign:"center",padding:"8px 0"}}>没有作业</div>}
       </div>
     </div>
+    {showEdit&&<EditCourseModal course={course} onSave={updated=>{onUpdate(updated);setShowEdit(false);}} onClose={()=>setShowEdit(false)}/>}
     {showAddNote&&<AddNoteModal courseId={course.id} episodeId={null} onSave={addNote} onClose={()=>setShowAddNote(false)}/>}
   </div>;
 }
@@ -1089,7 +1139,7 @@ function AddCourseModal({onSave,onClose}){
   const COLORS=["#185FA5","#0F6E56","#993C1D","#854F0B","#533AB7","#fb7299"];
   function save(){
     if(!f.title.trim())return;
-    onSave({...BLANK_COURSE,...f,totalEpisodes:parseInt(f.totalEpisodes)||0,episodes:[],id:Date.now(),createdAt:todayStr(),active:true});
+    onSave({...BLANK_COURSE,...f,totalEpisodes:parseInt(f.totalEpisodes)||0,episodes:[],id:Date.now(),createdAt:todayStr(),lastStudied:todayStr(),active:true});
     onClose();
   }
   return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -1121,7 +1171,7 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
   const p=PLATFORMS.find(x=>x.id===course.platform)||PLATFORMS[4];
   const donePct=course.episodes.length?Math.round(course.episodes.filter(e=>e.status==="done").length/course.episodes.length*100):0;
   const nextEp=course.episodes.find(e=>e.status==="todo"||e.status==="doing");
-  const stale=daysSince(course.lastStudied)>14&&course.active;
+  const stale=course.lastStudied&&daysSince(course.lastStudied)>14&&course.active;
   return<div style={{background:"#fff",border:`0.5px solid ${stale?"#f0b8b8":"#e0ddd6"}`,borderRadius:12,padding:"16px 18px",cursor:"pointer"}} onClick={()=>onOpen(course)}>
     <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
       <div style={{flex:1,minWidth:0}}>
