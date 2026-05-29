@@ -9,14 +9,16 @@
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f6f3}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f6f3;color:#1a1a1a}
 input,select,button,textarea{font-family:inherit}
 input:focus,select:focus,textarea:focus{outline:2px solid #185FA5;outline-offset:1px}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
 textarea{resize:vertical}
-.gantt-bar{transition:opacity .15s}
-.gantt-bar:hover{opacity:.85}
+.fade-in{animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.pulse{animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 </style>
 </head>
 <body>
@@ -24,7 +26,9 @@ textarea{resize:vertical}
 <script type="text/babel">
 const {useState,useRef,useEffect,useCallback}=React;
 
-/* ───────────────── constants ───────────────── */
+/* ═══════════════════════════════════════════
+   CONSTANTS
+═══════════════════════════════════════════ */
 const PROJECTS=[
   {id:1,name:"工作",color:"#185FA5"},
   {id:2,name:"个人成长",color:"#0F6E56"},
@@ -37,10 +41,17 @@ const BULLET_TYPES=[
   {sym:">",label:"已迁移",color:"#854F0B"},
   {sym:"×",label:"已取消",color:"#A32D2D"},
 ];
+const MONTHS=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
+const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false};
 
-/* ───────────────── helpers ───────────────── */
-function daysFromNow(n){const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];}
+/* ═══════════════════════════════════════════
+   DATE HELPERS
+═══════════════════════════════════════════ */
 function todayStr(){return new Date().toISOString().split("T")[0];}
+function daysFromNow(n){const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];}
+function yyyymmdd(d){return d.toISOString().split("T")[0];}
+function addDays(str,n){const d=new Date(str+"T00:00:00");d.setDate(d.getDate()+n);return yyyymmdd(d);}
+function daysBetween(a,b){return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000);}
 function fmtDate(str){
   if(!str)return"";
   const d=new Date(str+"T00:00:00");
@@ -50,25 +61,62 @@ function fmtDate(str){
 }
 function isOverdue(str){return str?new Date(str+"T00:00:00")<new Date().setHours(0,0,0,0):false;}
 function getProj(id){return PROJECTS.find(p=>p.id===id)||{name:"无项目",color:"#888"};}
-function yyyymmdd(d){return d.toISOString().split("T")[0];}
-function addDays(str,n){const d=new Date(str+"T00:00:00");d.setDate(d.getDate()+n);return yyyymmdd(d);}
-function daysBetween(a,b){return Math.round((new Date(b+"T00:00:00")-new Date(a+"T00:00:00"))/86400000);}
+function monthKey(y,m){return`${y}-${String(m+1).padStart(2,"0")}`;}
+function fmtSize(b){return b<1024?b+"B":b<1048576?Math.round(b/1024)+"KB":(b/1048576).toFixed(1)+"MB";}
 
-const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false};
-const SAMPLE=[
-  {...BLANK_TASK,id:1,title:"准备季度汇报PPT",project:1,due:daysFromNow(5),startDate:daysFromNow(-2),priority:"urgent"},
+/* ═══════════════════════════════════════════
+   GIST SYNC
+═══════════════════════════════════════════ */
+const GIST_FILENAME="zhujiao_data.json";
+
+async function gistLoad(token,gistId){
+  const res=await fetch(`https://api.github.com/gists/${gistId}`,{headers:{Authorization:`token ${token}`}});
+  if(!res.ok)throw new Error("读取失败");
+  const data=await res.json();
+  const raw=data.files?.[GIST_FILENAME]?.content;
+  return raw?JSON.parse(raw):null;
+}
+
+async function gistSave(token,gistId,payload){
+  const res=await fetch(`https://api.github.com/gists/${gistId}`,{
+    method:"PATCH",
+    headers:{Authorization:`token ${token}`,"Content-Type":"application/json"},
+    body:JSON.stringify({files:{[GIST_FILENAME]:{content:JSON.stringify(payload,null,2)}}}),
+  });
+  if(!res.ok)throw new Error("保存失败");
+  return res.json();
+}
+
+async function gistCreate(token){
+  const res=await fetch("https://api.github.com/gists",{
+    method:"POST",
+    headers:{Authorization:`token ${token}`,"Content-Type":"application/json"},
+    body:JSON.stringify({description:"专注板数据",public:false,files:{[GIST_FILENAME]:{content:JSON.stringify({tasks:[],journal:{},futureLog:{},courses:[],nextId:1},null,2)}}}),
+  });
+  if(!res.ok)throw new Error("创建Gist失败");
+  const data=await res.json();
+  return data.id;
+}
+
+/* ═══════════════════════════════════════════
+   LOCAL STORAGE (fallback + settings)
+═══════════════════════════════════════════ */
+function lsGet(k,def=null){try{const v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+
+/* ═══════════════════════════════════════════
+   SAMPLE DATA
+═══════════════════════════════════════════ */
+const SAMPLE_TASKS=[
+  {...BLANK_TASK,id:1,title:"准备季度汇报PPT",project:1,due:daysFromNow(5),startDate:daysFromNow(-2),priority:"urgent",migrateCount:1},
   {...BLANK_TASK,id:2,title:"回复产品经理邮件",project:1,due:daysFromNow(0),startDate:todayStr(),priority:"today"},
   {...BLANK_TASK,id:3,title:"读《深度工作》第三章",project:2,due:daysFromNow(6),startDate:daysFromNow(1),priority:"normal",subtasks:["第一节笔记","第二节笔记","总结"],subtaskDone:[false,false,false]},
-  {...BLANK_TASK,id:4,title:"预约牙医",project:3,due:daysFromNow(-1),startDate:daysFromNow(-3),priority:"urgent"},
-  {...BLANK_TASK,id:5,title:"整理桌面文件",project:1,due:daysFromNow(8),startDate:daysFromNow(3),priority:"normal",done:true},
+  {...BLANK_TASK,id:4,title:"预约牙医",project:3,due:daysFromNow(-1),startDate:daysFromNow(-3),priority:"urgent",migrateCount:2},
 ];
 
-function saveTasks(t){try{localStorage.setItem("zj_tasks_v3",JSON.stringify(t));}catch(e){}}
-function loadTasks(){try{const r=localStorage.getItem("zj_tasks_v3");if(r)return JSON.parse(r).map(t=>({...BLANK_TASK,...t}));}catch(e){}return null;}
-function saveJournal(j){try{localStorage.setItem("zj_journal_v1",JSON.stringify(j));}catch(e){}}
-function loadJournal(){try{const r=localStorage.getItem("zj_journal_v1");if(r)return JSON.parse(r);}catch(e){}return{};}
-
-/* ───────────────── tiny UI ───────────────── */
+/* ═══════════════════════════════════════════
+   TINY UI COMPONENTS
+═══════════════════════════════════════════ */
 function Check({checked,onClick,size=18}){
   return<div onClick={onClick} style={{width:size,height:size,borderRadius:"50%",border:checked?"none":"1.5px solid #bbb",background:checked?"#185FA5":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,transition:"all .15s"}}>
     {checked&&<span style={{color:"#fff",fontSize:size*.55,fontWeight:700}}>✓</span>}
@@ -79,28 +127,41 @@ function Tag({type}){
   const s=S[type]||S.normal;
   return<span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:s.bg,color:s.c,whiteSpace:"nowrap"}}>{s.l}</span>;
 }
-function Btn({onClick,children,style={},primary=false}){
-  return<button onClick={onClick} style={{padding:"7px 14px",border:primary?"none":"0.5px solid #ccc",background:primary?"#1a1a1a":"#fff",color:primary?"#fff":"#1a1a1a",borderRadius:7,fontSize:13,cursor:"pointer",...style}}>{children}</button>;
+function MigrateTag({count}){
+  if(!count)return null;
+  const color=count>=3?"#A32D2D":count>=2?"#854F0B":"#aaa";
+  return<span title={`已迁移${count}次`} style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:count>=3?"#FCEBEB":count>=2?"#FAEEDA":"#f0ede8",color,whiteSpace:"nowrap"}}>迁移×{count}</span>;
+}
+function SyncBadge({status}){
+  const S={idle:{c:"#bbb",l:""},saving:{c:"#854F0B",l:"保存中…"},saved:{c:"#0F6E56",l:"✓ 已同步"},error:{c:"#A32D2D",l:"⚠ 同步失败"}};
+  const s=S[status]||S.idle;
+  if(!s.l)return null;
+  return<span style={{fontSize:11,color:s.c,marginLeft:8}}>{s.l}</span>;
 }
 
-/* ───────────────── TaskRow ───────────────── */
+/* ═══════════════════════════════════════════
+   TASK ROW
+═══════════════════════════════════════════ */
 function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen}){
   const p=getProj(task.project);
   const ov=isOverdue(task.due)&&!task.done;
-  return<div style={{marginBottom:5}}>
-    <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.55:1}}>
+  const stale=task.migrateCount>=3;
+  return<div style={{marginBottom:5}} className="fade-in">
+    <div style={{background:"#fff",border:`0.5px solid ${stale?"#f0b8b8":"#e0ddd6"}`,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1}}>
       <Check checked={task.done} onClick={()=>onToggle(task.id)}/>
       <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onOpen(task)}>
         <div style={{fontSize:14,color:task.done?"#aaa":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
-        <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:p.color}}>{p.name}</span>
           {task.notes&&<span style={{fontSize:11,color:"#bbb"}}>📝</span>}
           {task.attachments?.length>0&&<span style={{fontSize:11,color:"#bbb"}}>📎{task.attachments.length}</span>}
+          {stale&&<span style={{fontSize:11,color:"#A32D2D"}}>已推了{task.migrateCount}次，要不要删掉？</span>}
         </div>
       </div>
-      <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+      <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
         {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":"#aaa",whiteSpace:"nowrap"}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
+        <MigrateTag count={task.migrateCount}/>
         {!task.done&&!task.subtasks.length&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
         {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
       </div>
@@ -114,7 +175,9 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen}){
   </div>;
 }
 
-/* ───────────────── TaskDetail modal ───────────────── */
+/* ═══════════════════════════════════════════
+   TASK DETAIL MODAL
+═══════════════════════════════════════════ */
 function TaskDetail({task,onClose,onSave,onDelete}){
   const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone]});
   const [ns,setNs]=useState("");
@@ -122,19 +185,12 @@ function TaskDetail({task,onClose,onSave,onDelete}){
   function up(k,v){setF(x=>({...x,[k]:v}));}
   function addSub(){if(!ns.trim())return;setF(x=>({...x,subtasks:[...x.subtasks,ns.trim()],subtaskDone:[...x.subtaskDone,false]}));setNs("");}
   function rmSub(i){setF(x=>({...x,subtasks:x.subtasks.filter((_,j)=>j!==i),subtaskDone:x.subtaskDone.filter((_,j)=>j!==i)}));}
-  function handleFile(e){
-    Array.from(e.target.files).forEach(file=>{
-      const r=new FileReader();
-      r.onload=ev=>setF(x=>({...x,attachments:[...x.attachments,{name:file.name,size:file.size,type:file.type,data:ev.target.result}]}));
-      r.readAsDataURL(file);
-    });
-  }
-  function fmtSize(b){return b<1024?b+"B":b<1048576?Math.round(b/1024)+"KB":(b/1048576).toFixed(1)+"MB";}
-  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"40px 16px"}}>
-    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,boxShadow:"0 12px 48px rgba(0,0,0,.18)",marginBottom:40}}>
-      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
-        <textarea value={f.title} onChange={e=>up("title",e.target.value)} style={{flex:1,fontSize:16,fontWeight:500,border:"none",outline:"none",resize:"none",lineHeight:1.4,background:"transparent",padding:0,minHeight:24}} rows={1} onInput={e=>{e.target.style.height="auto";e.target.style.height=e.target.scrollHeight+"px";}}/>
-        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer",lineHeight:1,flexShrink:0,marginTop:2}}>✕</button>
+  function handleFile(e){Array.from(e.target.files).forEach(file=>{const r=new FileReader();r.onload=ev=>setF(x=>({...x,attachments:[...x.attachments,{name:file.name,size:file.size,type:file.type,data:ev.target.result}]}));r.readAsDataURL(file);});}
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"40px 16px"}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,boxShadow:"0 12px 48px rgba(0,0,0,.2)",marginBottom:40}} className="fade-in">
+      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"flex-start",gap:12}}>
+        <textarea value={f.title} onChange={e=>up("title",e.target.value)} style={{flex:1,fontSize:16,fontWeight:500,border:"none",outline:"none",resize:"none",lineHeight:1.4,background:"transparent",padding:0}} rows={1} onInput={e=>{e.target.style.height="auto";e.target.style.height=e.target.scrollHeight+"px";}}/>
+        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>✕</button>
       </div>
       <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -144,12 +200,10 @@ function TaskDetail({task,onClose,onSave,onDelete}){
             ["截止日期",<input type="date" value={f.due} onChange={e=>up("due",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
           ].map(([l,el])=><div key={l}><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>{l}</div>{el}</div>)}
         </div>
-        <div>
-          <div style={{fontSize:11,color:"#aaa",marginBottom:4}}>备注</div>
+        <div><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>备注</div>
           <textarea value={f.notes} onChange={e=>up("notes",e.target.value)} placeholder="添加任何想记录的内容…" rows={3} style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.6}}/>
         </div>
-        <div>
-          <div style={{fontSize:11,color:"#aaa",marginBottom:6}}>子步骤</div>
+        <div><div style={{fontSize:11,color:"#aaa",marginBottom:6}}>子步骤</div>
           {f.subtasks.map((s,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
             <Check checked={f.subtaskDone[i]} size={14} onClick={()=>{const sd=[...f.subtaskDone];sd[i]=!sd[i];up("subtaskDone",sd);}}/>
             <span style={{flex:1,fontSize:13,color:f.subtaskDone[i]?"#aaa":"#444",textDecoration:f.subtaskDone[i]?"line-through":"none"}}>{s}</span>
@@ -160,79 +214,248 @@ function TaskDetail({task,onClose,onSave,onDelete}){
             <button onClick={addSub} style={{padding:"6px 12px",background:"#f0ede8",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,cursor:"pointer"}}>+添加</button>
           </div>
         </div>
-        <div>
-          <div style={{fontSize:11,color:"#aaa",marginBottom:6}}>附件</div>
+        <div><div style={{fontSize:11,color:"#aaa",marginBottom:6}}>附件</div>
           {f.attachments.map((a,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#f7f6f3",borderRadius:6,marginBottom:4}}>
-            <span style={{fontSize:16}}>{a.type?.startsWith("image")?"🖼️":a.type?.includes("pdf")?"📄":"📎"}</span>
+            <span>{a.type?.startsWith("image")?"🖼️":a.type?.includes("pdf")?"📄":"📎"}</span>
             <div style={{flex:1,minWidth:0}}><div style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.name}</div><div style={{fontSize:11,color:"#aaa"}}>{fmtSize(a.size)}</div></div>
             <a href={a.data} download={a.name} style={{fontSize:11,color:"#185FA5",textDecoration:"none"}}>下载</a>
             <button onClick={()=>setF(x=>({...x,attachments:x.attachments.filter((_,j)=>j!==i)}))} style={{color:"#ccc",background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button>
           </div>)}
-          <button onClick={()=>fRef.current.click()} style={{padding:"6px 14px",border:"0.5px dashed #ccc",background:"#fafafa",borderRadius:6,fontSize:13,cursor:"pointer",color:"#666",width:"100%",marginTop:2}}>+ 上传文件</button>
+          <button onClick={()=>fRef.current.click()} style={{padding:"6px 14px",border:"0.5px dashed #ccc",background:"#fafafa",borderRadius:6,fontSize:13,cursor:"pointer",color:"#666",width:"100%"}}>+ 上传文件</button>
           <input ref={fRef} type="file" multiple style={{display:"none"}} onChange={handleFile}/>
         </div>
       </div>
       <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <button onClick={()=>onDelete(task.id)} style={{fontSize:13,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>删除任务</button>
         <div style={{display:"flex",gap:8}}>
-          <Btn onClick={onClose}>取消</Btn>
-          <Btn primary onClick={()=>{if(f.title.trim())onSave({...task,...f});}}>保存</Btn>
+          <button onClick={onClose} style={{padding:"7px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+          <button onClick={()=>{if(f.title.trim())onSave({...task,...f});}} style={{padding:"7px 16px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>保存</button>
         </div>
       </div>
     </div>
   </div>;
 }
 
-/* ───────────────── Gantt ───────────────── */
-function GanttView({tasks,onOpen}){
-  const today=todayStr();
-  const activeTasks=tasks.filter(t=>t.startDate&&t.due);
-  if(!activeTasks.length)return<div style={{padding:"40px 0",textAlign:"center",color:"#aaa",fontSize:14}}>没有设置开始日期的任务。<br/>在任务详情里添加「开始日期」后会显示在这里。</div>;
-
-  const allDates=[...activeTasks.flatMap(t=>[t.startDate,t.due]),today];
-  const minDate=allDates.reduce((a,b)=>a<b?a:b);
-  const maxDate=allDates.reduce((a,b)=>a>b?a:b);
-  const span=Math.max(daysBetween(minDate,maxDate)+1,14);
-  const dates=Array.from({length:span},(_,i)=>addDays(minDate,i));
-  const COL=36;
-  const ROW=38;
-  const LEFT=180;
-  const todayX=daysBetween(minDate,today);
-
-  return<div style={{overflowX:"auto",paddingBottom:8}}>
-    <div style={{minWidth:LEFT+span*COL,fontFamily:"inherit"}}>
-      {/* header */}
-      <div style={{display:"flex",position:"sticky",top:0,background:"#f7f6f3",zIndex:2,borderBottom:"0.5px solid #e0ddd6",paddingBottom:4}}>
-        <div style={{width:LEFT,flexShrink:0,fontSize:12,color:"#aaa",padding:"6px 8px"}}>任务</div>
-        {dates.map(d=>{
-          const isToday=d===today;
-          const dom=new Date(d+"T00:00:00").getDate();
-          const isMon=new Date(d+"T00:00:00").getDay()===1;
-          return<div key={d} style={{width:COL,flexShrink:0,textAlign:"center",fontSize:10,color:isToday?"#185FA5":isMon?"#555":"#bbb",fontWeight:isToday?700:isMon?500:400,paddingTop:6,position:"relative"}}>
-            {isToday?<span style={{background:"#185FA5",color:"#fff",borderRadius:10,padding:"1px 5px"}}>{dom}</span>:dom}
+/* ═══════════════════════════════════════════
+   EVENING MIGRATION PANEL
+═══════════════════════════════════════════ */
+function MigrationPanel({tasks,onMigrate,onClose}){
+  const pending=tasks.filter(t=>!t.done&&t.due<=todayStr());
+  const [decisions,setDecisions]=useState(()=>Object.fromEntries(pending.map(t=>[t.id,"tomorrow"])));
+  function decide(id,v){setDecisions(d=>({...d,[id]:v}));}
+  function confirm(){onMigrate(decisions);onClose();}
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:560,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+      <div style={{padding:"20px 24px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>🌙 结束今天</div>
+        <div style={{fontSize:13,color:"#888"}}>今天有 {pending.length} 个未完成任务，每个选一个去向</div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"16px 24px",display:"flex",flexDirection:"column",gap:10}}>
+        {pending.length===0&&<div style={{fontSize:14,color:"#aaa",textAlign:"center",padding:"32px 0"}}>🎉 今天全部完成了！厉害！</div>}
+        {pending.map(t=>{
+          const p=getProj(t.project);
+          return<div key={t.id} style={{background:"#f7f6f3",borderRadius:10,padding:"12px 14px"}}>
+            <div style={{fontSize:14,fontWeight:500,marginBottom:8,color:t.migrateCount>=3?"#A32D2D":"#1a1a1a"}}>
+              {t.title}
+              {t.migrateCount>0&&<span style={{fontSize:11,color:"#A32D2D",marginLeft:6}}>已推{t.migrateCount}次</span>}
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {[["tomorrow","明天继续","#185FA5"],["nextweek","推到下周","#0F6E56"],["someday","推到未来","#854F0B"],["drop","直接删掉","#A32D2D"]].map(([v,l,c])=>(
+                <button key={v} onClick={()=>decide(t.id,v)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${decisions[t.id]===v?c:"#e0ddd6"}`,background:decisions[t.id]===v?c:"#fff",color:decisions[t.id]===v?"#fff":c,fontSize:12,cursor:"pointer",fontWeight:decisions[t.id]===v?600:400,transition:"all .15s"}}>{l}</button>
+              ))}
+            </div>
           </div>;
         })}
       </div>
-      {/* rows */}
-      {activeTasks.map(t=>{
+      <div style={{padding:"14px 24px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <button onClick={onClose} style={{fontSize:13,color:"#888",background:"none",border:"none",cursor:"pointer"}}>稍后再说</button>
+        <button onClick={confirm} style={{padding:"8px 20px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>确认并结束今天 →</button>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   BRAIN DUMP MODAL
+═══════════════════════════════════════════ */
+function BrainDump({onClose,onAddTasks,apiKey}){
+  const [text,setText]=useState("");
+  const [result,setResult]=useState(null);
+  const [loading,setLoading]=useState(false);
+  async function analyze(){
+    if(!text.trim())return;
+    if(!apiKey){setResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
+    setLoading(true);
+    try{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:`用户现在脑子很乱，把以下内容分类整理成JSON。分为：tasks（需要做的事，数组，每项有title字符串）、worries（担忧/焦虑，数组字符串）、ideas（想法/灵感，数组字符串）。只返回JSON，不要其他文字。\n\n用户内容：${text}`}]}]}),
+      });
+      const data=await res.json();
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||"{}";
+      const clean=raw.replace(/```json|```/g,"").trim();
+      setResult(JSON.parse(clean));
+    }catch(e){setResult({error:"分析失败，请重试"});}
+    setLoading(false);
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+      <div style={{padding:"20px 24px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>🧠 脑倾倒</div>
+        <div style={{fontSize:13,color:"#888"}}>把脑子里所有东西都倒出来，不用整理，AI帮你分类</div>
+      </div>
+      <div style={{padding:"16px 24px"}}>
+        {!result&&<>
+          <textarea value={text} onChange={e=>setText(e.target.value)} placeholder={"想到什么写什么，比如：\n- 明天要交报告好像\n- 一直担心那个项目\n- 想学摄影\n- 好像忘了回某人消息\n..."} rows={7} style={{width:"100%",padding:"10px 12px",border:"0.5px solid #ccc",borderRadius:8,fontSize:14,lineHeight:1.7,marginBottom:12}}/>
+          <button onClick={analyze} disabled={loading} style={{width:"100%",padding:"10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",opacity:loading?.7:1}}>
+            {loading?"分析中…":"🪄 AI帮我整理"}
+          </button>
+        </>}
+        {result&&!result.error&&<div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {result.tasks?.length>0&&<div>
+            <div style={{fontSize:12,color:"#185FA5",fontWeight:600,marginBottom:6}}>✅ 需要做的事 ({result.tasks.length})</div>
+            {result.tasks.map((t,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:"#EBF3FB",borderRadius:6,marginBottom:3,fontSize:13}}><span style={{color:"#185FA5"}}>•</span>{t.title}</div>)}
+          </div>}
+          {result.worries?.length>0&&<div>
+            <div style={{fontSize:12,color:"#854F0B",fontWeight:600,marginBottom:6}}>😰 担忧/焦虑 ({result.worries.length})</div>
+            {result.worries.map((w,i)=><div key={i} style={{padding:"6px 8px",background:"#FAEEDA",borderRadius:6,marginBottom:3,fontSize:13}}>{w}</div>)}
+          </div>}
+          {result.ideas?.length>0&&<div>
+            <div style={{fontSize:12,color:"#0F6E56",fontWeight:600,marginBottom:6}}>💡 想法/灵感 ({result.ideas.length})</div>
+            {result.ideas.map((d,i)=><div key={i} style={{padding:"6px 8px",background:"#E1F5EE",borderRadius:6,marginBottom:3,fontSize:13}}>{d}</div>)}
+          </div>}
+          {result.error&&<div style={{color:"#A32D2D",fontSize:13}}>{result.error}</div>}
+        </div>}
+        {result?.error&&<div style={{color:"#A32D2D",fontSize:13,padding:"8px 0"}}>{result.error}</div>}
+      </div>
+      <div style={{padding:"12px 24px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between"}}>
+        <button onClick={onClose} style={{fontSize:13,color:"#888",background:"none",border:"none",cursor:"pointer"}}>关闭</button>
+        {result&&!result.error&&result.tasks?.length>0&&(
+          <button onClick={()=>{onAddTasks(result.tasks.map(t=>t.title));onClose();}} style={{padding:"7px 16px",background:"#185FA5",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>把任务全部加入列表 →</button>
+        )}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   MONTHLY REVIEW MODAL
+═══════════════════════════════════════════ */
+function MonthlyReview({tasks,onClose}){
+  const [q1,setQ1]=useState("");
+  const [q2,setQ2]=useState("");
+  const [q3,setQ3]=useState("");
+  const [saved,setSaved]=useState(false);
+  const staleTasks=tasks.filter(t=>!t.done&&t.migrateCount>=3);
+  function save(){
+    const key=`review_${monthKey(new Date().getFullYear(),new Date().getMonth())}`;
+    lsSet(key,{q1,q2,q3,date:todayStr()});
+    setSaved(true);
+    setTimeout(onClose,1200);
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:500,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+      <div style={{padding:"20px 24px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>📅 月度回顾</div>
+        <div style={{fontSize:13,color:"#888"}}>三个问题，5分钟完成</div>
+      </div>
+      <div style={{padding:"16px 24px",display:"flex",flexDirection:"column",gap:16}}>
+        {staleTasks.length>0&&<div style={{background:"#FCEBEB",borderRadius:8,padding:"10px 14px"}}>
+          <div style={{fontSize:12,color:"#A32D2D",fontWeight:600,marginBottom:6}}>⚠ 这些任务已经推了3次以上，考虑删掉？</div>
+          {staleTasks.map(t=><div key={t.id} style={{fontSize:13,color:"#A32D2D",padding:"2px 0"}}>• {t.title}（推了{t.migrateCount}次）</div>)}
+        </div>}
+        {[["这个月完成了什么？（随便写，不用完整）",q1,setQ1],["哪些任务反复推迟？原因是什么？",q2,setQ2],["下个月最重要的一件事是什么？",q3,setQ3]].map(([q,v,set],i)=>(
+          <div key={i}><div style={{fontSize:13,fontWeight:500,marginBottom:6,color:"#555"}}>{q}</div>
+            <textarea value={v} onChange={e=>set(e.target.value)} rows={2} style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.6}}/>
+          </div>
+        ))}
+      </div>
+      <div style={{padding:"12px 24px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"flex-end"}}>
+        {saved?<span style={{fontSize:14,color:"#0F6E56"}}>✓ 已保存！</span>:
+          <button onClick={save} style={{padding:"8px 20px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"}}>保存回顾</button>}
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   FUTURE LOG
+═══════════════════════════════════════════ */
+function FutureLog({futureLog,onUpdate,onMoveToTasks}){
+  const [input,setInput]=useState("");
+  const [selMonth,setSelMonth]=useState(()=>{const d=new Date();return monthKey(d.getFullYear(),d.getMonth()+1);});
+  const today=new Date();
+  const months=Array.from({length:6},(_,i)=>{const d=new Date(today.getFullYear(),today.getMonth()+1+i,1);return{key:monthKey(d.getFullYear(),d.getMonth()),label:`${d.getFullYear()}年${MONTHS[d.getMonth()]}`,y:d.getFullYear(),m:d.getMonth()};});
+  function addItem(){
+    if(!input.trim())return;
+    const items=[...(futureLog[selMonth]||[]),{id:Date.now(),text:input.trim()}];
+    onUpdate({...futureLog,[selMonth]:items});setInput("");
+  }
+  function removeItem(mk,id){onUpdate({...futureLog,[mk]:(futureLog[mk]||[]).filter(i=>i.id!==id)});}
+  function moveToTask(mk,item){onMoveToTasks(item.text,mk);removeItem(mk,item.id);}
+  return<div>
+    <div style={{fontSize:13,color:"#888",marginBottom:16}}>把"以后想做但不是现在"的事放在这里，清空大脑里的模糊焦虑池</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+      {months.map(({key,label})=>{
+        const items=futureLog[key]||[];
+        return<div key={key} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",borderBottom:"0.5px solid #f0ede8",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <span style={{fontSize:13,fontWeight:500}}>{label}</span>
+            <span style={{fontSize:11,color:"#aaa"}}>{items.length}件事</span>
+          </div>
+          <div style={{padding:"8px 12px",minHeight:60}}>
+            {items.length===0&&<div style={{fontSize:12,color:"#ddd",padding:"8px 0",textAlign:"center"}}>空的，随时可以放东西进来</div>}
+            {items.map(item=><div key={item.id} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f7f6f3"}}>
+              <span style={{flex:1,fontSize:13,color:"#555"}}>{item.text}</span>
+              <button onClick={()=>moveToTask(key,item)} title="移入任务列表" style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"1px 4px"}}>→任务</button>
+              <button onClick={()=>removeItem(key,item.id)} style={{color:"#ddd",background:"none",border:"none",cursor:"pointer",fontSize:13}}>✕</button>
+            </div>)}
+          </div>
+        </div>;
+      })}
+    </div>
+    <div style={{marginTop:16,display:"flex",gap:8}}>
+      <select value={selMonth} onChange={e=>setSelMonth(e.target.value)} style={{padding:"7px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
+        {months.map(({key,label})=><option key={key} value={key}>{label}</option>)}
+      </select>
+      <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addItem()} placeholder="有什么事以后想做…" style={{flex:1,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+      <button onClick={addItem} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>放进去</button>
+    </div>
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   GANTT
+═══════════════════════════════════════════ */
+function GanttView({tasks,onOpen}){
+  const today=todayStr();
+  const active=tasks.filter(t=>t.startDate&&t.due);
+  if(!active.length)return<div style={{padding:"40px 0",textAlign:"center",color:"#aaa",fontSize:14}}>在任务详情里添加「开始日期」后会显示在这里</div>;
+  const all=[...active.flatMap(t=>[t.startDate,t.due]),today];
+  const minD=all.reduce((a,b)=>a<b?a:b);
+  const maxD=all.reduce((a,b)=>a>b?a:b);
+  const span=Math.max(daysBetween(minD,maxD)+1,14);
+  const dates=Array.from({length:span},(_,i)=>addDays(minD,i));
+  const COL=36,ROW=38,LEFT=180;
+  return<div style={{overflowX:"auto",paddingBottom:8}}>
+    <div style={{minWidth:LEFT+span*COL}}>
+      <div style={{display:"flex",position:"sticky",top:0,background:"#f7f6f3",zIndex:2,borderBottom:"0.5px solid #e0ddd6",paddingBottom:4}}>
+        <div style={{width:LEFT,flexShrink:0,fontSize:12,color:"#aaa",padding:"6px 8px"}}>任务</div>
+        {dates.map(d=>{const isT=d===today;const dom=new Date(d+"T00:00:00").getDate();const isMon=new Date(d+"T00:00:00").getDay()===1;return<div key={d} style={{width:COL,flexShrink:0,textAlign:"center",fontSize:10,color:isT?"#185FA5":isMon?"#555":"#bbb",fontWeight:isT?700:isMon?500:400,paddingTop:6}}>{isT?<span style={{background:"#185FA5",color:"#fff",borderRadius:10,padding:"1px 5px"}}>{dom}</span>:dom}</div>;})}
+      </div>
+      {active.map(t=>{
         const p=getProj(t.project);
-        const s=daysBetween(minDate,t.startDate);
-        const e=daysBetween(minDate,t.due);
-        const w=Math.max(e-s+1,1)*COL;
-        const x=s*COL;
-        const done=t.done;
-        const subDone=t.subtasks.length?t.subtaskDone.filter(Boolean).length:null;
-        const pct=subDone!==null?Math.round(subDone/t.subtasks.length*100):done?100:0;
+        const s=daysBetween(minD,t.startDate);const e=daysBetween(minD,t.due);
+        const w=Math.max(e-s+1,1)*COL;const x=s*COL;
+        const pct=t.subtasks.length?Math.round(t.subtaskDone.filter(Boolean).length/t.subtasks.length*100):t.done?100:0;
         return<div key={t.id} style={{display:"flex",alignItems:"center",borderBottom:"0.5px solid #f0ede8",height:ROW,position:"relative"}}>
           <div style={{width:LEFT,flexShrink:0,padding:"0 8px",cursor:"pointer",overflow:"hidden"}} onClick={()=>onOpen(t)}>
-            <div style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:done?"#aaa":"#1a1a1a",textDecoration:done?"line-through":"none"}}>{t.title}</div>
+            <div style={{fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.done?"#aaa":"#1a1a1a",textDecoration:t.done?"line-through":"none"}}>{t.title}</div>
             <div style={{fontSize:11,color:p.color}}>{p.name}</div>
           </div>
-          {/* grid lines */}
           {dates.map((d,i)=><div key={d} style={{position:"absolute",left:LEFT+i*COL,top:0,width:COL,height:"100%",background:d===today?"rgba(24,95,165,.05)":"transparent",borderRight:i%7===6?"0.5px solid #e0ddd6":"none"}}/>)}
-          {/* bar */}
-          <div className="gantt-bar" onClick={()=>onOpen(t)} style={{position:"absolute",left:LEFT+x,width:w,height:22,top:(ROW-22)/2,borderRadius:5,background:done?"#ddd":p.color,cursor:"pointer",overflow:"hidden",display:"flex",alignItems:"center"}}>
-            {pct>0&&!done&&<div style={{height:"100%",width:`${pct}%`,background:"rgba(255,255,255,.3)",borderRadius:"5px 0 0 5px"}}/>}
+          <div onClick={()=>onOpen(t)} style={{position:"absolute",left:LEFT+x,width:w,height:22,top:(ROW-22)/2,borderRadius:5,background:t.done?"#ddd":p.color,cursor:"pointer",overflow:"hidden",display:"flex",alignItems:"center"}}>
+            {pct>0&&!t.done&&<div style={{height:"100%",width:`${pct}%`,background:"rgba(255,255,255,.3)",borderRadius:"5px 0 0 5px"}}/>}
             {w>60&&<span style={{position:"absolute",left:8,fontSize:11,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",maxWidth:w-16}}>{t.title}</span>}
           </div>
         </div>;
@@ -241,7 +464,9 @@ function GanttView({tasks,onOpen}){
   </div>;
 }
 
-/* ───────────────── Project Panel ───────────────── */
+/* ═══════════════════════════════════════════
+   PROJECT PANEL
+═══════════════════════════════════════════ */
 function ProjectPanel({project,tasks,onOpen,onBack}){
   const pts=tasks.filter(t=>t.project===project.id);
   const done=pts.filter(t=>t.done).length;
@@ -253,42 +478,30 @@ function ProjectPanel({project,tasks,onOpen,onBack}){
       <span style={{width:10,height:10,borderRadius:"50%",background:project.color,flexShrink:0}}/>
       <span style={{fontSize:16,fontWeight:500}}>{project.name}</span>
     </div>
-    {/* stats */}
     <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
       {[["总任务",pts.length],["已完成",done],["进行中",pts.filter(t=>!t.done&&t.startDate<=todayStr()).length],["完成率",pct+"%"]].map(([l,v])=>(
         <div key={l} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:20,fontWeight:500}}>{v}</div>
-          <div style={{fontSize:12,color:"#aaa",marginTop:2}}>{l}</div>
+          <div style={{fontSize:20,fontWeight:500}}>{v}</div><div style={{fontSize:12,color:"#aaa",marginTop:2}}>{l}</div>
         </div>
       ))}
     </div>
-    {/* progress bar */}
     <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"14px 16px",marginBottom:20}}>
-      <div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:8}}>
-        <span style={{color:"#555"}}>整体进度</span>
-        <span style={{fontWeight:500}}>{pct}%</span>
-      </div>
-      <div style={{height:8,background:"#f0ede8",borderRadius:4,overflow:"hidden"}}>
-        <div style={{height:"100%",width:`${pct}%`,background:project.color,borderRadius:4,transition:"width .3s"}}/>
-      </div>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:8}}><span>整体进度</span><span style={{fontWeight:500}}>{pct}%</span></div>
+      <div style={{height:8,background:"#f0ede8",borderRadius:4,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:project.color,borderRadius:4,transition:"width .3s"}}/></div>
     </div>
-    {/* tabs */}
     <div style={{display:"flex",gap:0,marginBottom:16,borderBottom:"0.5px solid #e0ddd6"}}>
       {[["list","任务列表"],["gantt","甘特图"]].map(([id,l])=>(
-        <button key={id} onClick={()=>setTab(id)} style={{padding:"8px 18px",fontSize:13,background:"none",border:"none",cursor:"pointer",color:tab===id?"#1a1a1a":"#888",borderBottom:tab===id?"2px solid #1a1a1a":"2px solid transparent",fontWeight:tab===id?500:400}}>
-          {l}
-        </button>
+        <button key={id} onClick={()=>setTab(id)} style={{padding:"8px 18px",fontSize:13,background:"none",border:"none",cursor:"pointer",color:tab===id?"#1a1a1a":"#888",borderBottom:tab===id?"2px solid #1a1a1a":"2px solid transparent",fontWeight:tab===id?500:400}}>{l}</button>
       ))}
     </div>
     {tab==="list"&&pts.map(t=>{
-      const p=getProj(t.project);
       const ov=isOverdue(t.due)&&!t.done;
       return<div key={t.id} onClick={()=>onOpen(t)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"10px 14px",marginBottom:6,cursor:"pointer",opacity:t.done?.6:1}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:8,height:8,borderRadius:"50%",background:t.done?"#ddd":project.color,flexShrink:0}}/>
           <span style={{fontSize:14,flex:1,color:t.done?"#aaa":"#1a1a1a",textDecoration:t.done?"line-through":"none"}}>{t.title}</span>
           {t.due&&<span style={{fontSize:11,color:ov?"#A32D2D":"#aaa"}}>📅{fmtDate(t.due)}</span>}
-          <Tag type={t.priority}/>
+          <Tag type={t.priority}/><MigrateTag count={t.migrateCount}/>
         </div>
         {t.subtasks.length>0&&<div style={{marginTop:6,paddingLeft:18}}>
           <div style={{height:4,background:"#f0ede8",borderRadius:2,overflow:"hidden",marginBottom:3}}>
@@ -302,63 +515,42 @@ function ProjectPanel({project,tasks,onOpen,onBack}){
   </div>;
 }
 
-/* ───────────────── Calendar + Bullet Journal ───────────────── */
-function CalendarView({tasks,onAddTask}){
+/* ═══════════════════════════════════════════
+   CALENDAR + BULLET JOURNAL
+═══════════════════════════════════════════ */
+function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
   const [curMonth,setCurMonth]=useState(()=>{const d=new Date();return{y:d.getFullYear(),m:d.getMonth()};});
   const [selDay,setSelDay]=useState(todayStr());
-  const [journal,setJournal]=useState(loadJournal);
   const [newEntry,setNewEntry]=useState("");
   const [newType,setNewType]=useState("•");
   const today=todayStr();
-
-  function saveJ(j){setJournal(j);saveJournal(j);}
   function getDayEntries(d){return journal[d]||[];}
-
+  function saveJ(j){onJournalUpdate(j);}
   function addEntry(){
     if(!newEntry.trim())return;
     const entry={id:Date.now(),sym:newType,text:newEntry.trim(),done:false};
-    const updated={...journal,[selDay]:[...getDayEntries(selDay),entry]};
-    saveJ(updated);
-    if(newType==="•"){
-      // sync to task list
-      onAddTask({title:newEntry.trim(),project:1,due:selDay,priority:"normal",fromJournal:true});
-    }
+    saveJ({...journal,[selDay]:[...getDayEntries(selDay),entry]});
+    if(newType==="•")onAddTask({title:newEntry.trim(),project:1,due:selDay,priority:"normal",fromJournal:true});
     setNewEntry("");
   }
-
-  function toggleEntry(d,id){
-    const entries=getDayEntries(d).map(e=>e.id===id?{...e,done:!e.done}:e);
-    saveJ({...journal,[d]:entries});
-  }
-  function deleteEntry(d,id){
-    saveJ({...journal,[d]:getDayEntries(d).filter(e=>e.id!==id)});
-  }
-
-  // calendar grid
+  function toggleEntry(d,id){saveJ({...journal,[d]:getDayEntries(d).map(e=>e.id===id?{...e,done:!e.done}:e)});}
+  function deleteEntry(d,id){saveJ({...journal,[d]:getDayEntries(d).filter(e=>e.id!==id)});}
   const firstDay=new Date(curMonth.y,curMonth.m,1);
   const lastDay=new Date(curMonth.y,curMonth.m+1,0);
-  const startDow=(firstDay.getDay()+6)%7; // Mon=0
+  const startDow=(firstDay.getDay()+6)%7;
   const cells=[];
   for(let i=0;i<startDow;i++)cells.push(null);
   for(let d=1;d<=lastDay.getDate();d++)cells.push(new Date(curMonth.y,curMonth.m,d));
-
-  function hasTasks(d){
-    const s=yyyymmdd(d);
-    return tasks.some(t=>t.due===s)||getDayEntries(s).length>0;
-  }
-  function monthName(){return new Date(curMonth.y,curMonth.m,1).toLocaleDateString("zh-CN",{year:"numeric",month:"long"});}
-
+  function hasDot(d){const s=yyyymmdd(d);return tasks.some(t=>t.due===s)||getDayEntries(s).length>0;}
   const selEntries=getDayEntries(selDay);
   const selTasks=tasks.filter(t=>t.due===selDay);
-
   return<div style={{display:"flex",gap:20,alignItems:"flex-start"}}>
-    {/* left: calendar */}
     <div style={{width:280,flexShrink:0}}>
       <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,overflow:"hidden"}}>
         <div style={{padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"0.5px solid #e0ddd6"}}>
-          <button onClick={()=>setCurMonth(m=>m.m===0?{y:m.y-1,m:11}:{y:m.y,m:m.m-1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#666"}}>‹</button>
-          <span style={{fontSize:14,fontWeight:500}}>{monthName()}</span>
-          <button onClick={()=>setCurMonth(m=>m.m===11?{y:m.y+1,m:0}:{y:m.y,m:m.m+1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#666"}}>›</button>
+          <button onClick={()=>setCurMonth(m=>m.m===0?{y:m.y-1,m:11}:{y:m.y,m:m.m-1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#666",lineHeight:1}}>‹</button>
+          <span style={{fontSize:14,fontWeight:500}}>{curMonth.y}年{MONTHS[curMonth.m]}</span>
+          <button onClick={()=>setCurMonth(m=>m.m===11?{y:m.y+1,m:0}:{y:m.y,m:m.m+1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#666",lineHeight:1}}>›</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"8px 8px 0"}}>
           {["一","二","三","四","五","六","日"].map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:"#bbb",padding:"4px 0"}}>{d}</div>)}
@@ -366,24 +558,14 @@ function CalendarView({tasks,onAddTask}){
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"0 8px 8px",gap:2}}>
           {cells.map((d,i)=>{
             if(!d)return<div key={`e${i}`}/>;
-            const ds=yyyymmdd(d);
-            const isToday=ds===today;
-            const isSel=ds===selDay;
-            const hasData=hasTasks(d);
-            return<div key={ds} onClick={()=>setSelDay(ds)} style={{
-              aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-              borderRadius:8,cursor:"pointer",position:"relative",
-              background:isSel?"#1a1a1a":isToday?"#EBF3FB":"transparent",
-              color:isSel?"#fff":isToday?"#185FA5":"#1a1a1a",
-              fontWeight:isToday||isSel?600:400,fontSize:13,
-            }}>
+            const ds=yyyymmdd(d);const isT=ds===today;const isSel=ds===selDay;const has=hasDot(d);
+            return<div key={ds} onClick={()=>setSelDay(ds)} style={{aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",borderRadius:8,cursor:"pointer",position:"relative",background:isSel?"#1a1a1a":isT?"#EBF3FB":"transparent",color:isSel?"#fff":isT?"#185FA5":"#1a1a1a",fontWeight:isT||isSel?600:400,fontSize:13}}>
               {d.getDate()}
-              {hasData&&<div style={{width:4,height:4,borderRadius:"50%",background:isSel?"rgba(255,255,255,.6)":isToday?"#185FA5":"#bbb",position:"absolute",bottom:3}}/>}
+              {has&&<div style={{width:4,height:4,borderRadius:"50%",background:isSel?"rgba(255,255,255,.6)":isT?"#185FA5":"#bbb",position:"absolute",bottom:3}}/>}
             </div>;
           })}
         </div>
       </div>
-      {/* bullet type legend */}
       <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"12px 14px",marginTop:10}}>
         <div style={{fontSize:11,color:"#aaa",marginBottom:8}}>符号说明</div>
         {BULLET_TYPES.map(b=><div key={b.sym} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
@@ -392,16 +574,12 @@ function CalendarView({tasks,onAddTask}){
         </div>)}
       </div>
     </div>
-
-    {/* right: daily log */}
     <div style={{flex:1,minWidth:0}}>
       <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px"}}>
-        <div style={{fontSize:15,fontWeight:500,marginBottom:14,color:"#1a1a1a"}}>
+        <div style={{fontSize:15,fontWeight:500,marginBottom:14}}>
           {new Date(selDay+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}
           {selDay===today&&<span style={{fontSize:12,color:"#185FA5",background:"#EBF3FB",padding:"2px 8px",borderRadius:6,marginLeft:8}}>今天</span>}
         </div>
-
-        {/* tasks due this day */}
         {selTasks.length>0&&<div style={{marginBottom:14}}>
           <div style={{fontSize:11,color:"#aaa",marginBottom:6}}>截止任务</div>
           {selTasks.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
@@ -411,46 +589,39 @@ function CalendarView({tasks,onAddTask}){
           </div>)}
           <div style={{height:"0.5px",background:"#e0ddd6",margin:"12px 0"}}/>
         </div>}
-
-        {/* journal entries */}
-        {selEntries.length>0&&<div style={{marginBottom:14}}>
-          {selEntries.map(e=>{
-            const bt=BULLET_TYPES.find(b=>b.sym===e.sym)||BULLET_TYPES[2];
-            return<div key={e.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 0",borderBottom:"0.5px solid #f0ede8"}}>
-              <button onClick={()=>toggleEntry(selDay,e.id)} style={{width:24,height:24,flexShrink:0,background:"none",border:"none",cursor:"pointer",fontSize:15,color:bt.color,fontWeight:700,lineHeight:1,padding:0,marginTop:1}}>{e.sym}</button>
-              <span style={{flex:1,fontSize:14,color:e.done?"#aaa":"#1a1a1a",textDecoration:e.done?"line-through":"none",lineHeight:1.5}}>{e.text}</span>
-              <button onClick={()=>deleteEntry(selDay,e.id)} style={{color:"#ddd",background:"none",border:"none",cursor:"pointer",fontSize:13,lineHeight:1,flexShrink:0}}>✕</button>
-            </div>;
-          })}
-        </div>}
-
+        {selEntries.map(e=>{
+          const bt=BULLET_TYPES.find(b=>b.sym===e.sym)||BULLET_TYPES[2];
+          return<div key={e.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 0",borderBottom:"0.5px solid #f0ede8"}}>
+            <button onClick={()=>toggleEntry(selDay,e.id)} style={{width:24,height:24,flexShrink:0,background:"none",border:"none",cursor:"pointer",fontSize:15,color:bt.color,fontWeight:700,lineHeight:1,padding:0,marginTop:1}}>{e.sym}</button>
+            <span style={{flex:1,fontSize:14,color:e.done?"#aaa":"#1a1a1a",textDecoration:e.done?"line-through":"none",lineHeight:1.5}}>{e.text}</span>
+            <button onClick={()=>deleteEntry(selDay,e.id)} style={{color:"#ddd",background:"none",border:"none",cursor:"pointer",fontSize:13}}>✕</button>
+          </div>;
+        })}
         {selEntries.length===0&&selTasks.length===0&&<div style={{fontSize:13,color:"#ccc",padding:"16px 0",textAlign:"center"}}>这天还没有记录</div>}
-
-        {/* add entry */}
-        <div style={{marginTop:12,display:"flex",gap:8,alignItems:"center"}}>
-          <select value={newType} onChange={e=>setNewType(e.target.value)} style={{width:72,padding:"7px 6px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
+        <div style={{marginTop:14,display:"flex",gap:8,alignItems:"center"}}>
+          <select value={newType} onChange={e=>setNewType(e.target.value)} style={{width:82,padding:"7px 6px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
             {BULLET_TYPES.map(b=><option key={b.sym} value={b.sym}>{b.sym} {b.label}</option>)}
           </select>
-          <input value={newEntry} onChange={e=>setNewEntry(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addEntry()} placeholder={newType==="•"?"输入任务（自动同步到任务列表）…":"输入记录…"} style={{flex:1,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+          <input value={newEntry} onChange={e=>setNewEntry(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addEntry()} placeholder={newType==="•"?"任务（自动同步到任务列表）…":"输入记录…"} style={{flex:1,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
           <button onClick={addEntry} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>记录</button>
         </div>
-        <div style={{fontSize:11,color:"#bbb",marginTop:6}}>「•任务」条目会自动同步到任务列表</div>
       </div>
     </div>
   </div>;
 }
 
-/* ───────────────── AI Panel ───────────────── */
-function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef}){
+/* ═══════════════════════════════════════════
+   AI PANEL (Gemini)
+═══════════════════════════════════════════ */
+function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
   const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 帮你理清思路\n\n有什么需要帮忙的？"}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
-  const [apiKey,setApiKey]=useState(()=>localStorage.getItem("zj_gemini_key")||"");
   const [showKey,setShowKey]=useState(false);
   const msgRef=useRef(null);
   useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
   useEffect(()=>{if(sendRef)sendRef.current=(task)=>send(`帮我把这个任务拆成3-5个具体小步骤：${task.title}`,task.id);});
-  function saveKey(k){setApiKey(k);localStorage.setItem("zj_gemini_key",k);setShowKey(false);}
+  function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
   async function send(text,btid){
     if(!text||loading)return;
     if(!apiKey){setShowKey(true);return;}
@@ -459,23 +630,20 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef}){
     try{
       const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({contents:[{parts:[{text:`你是一个ADHD专属效率助手。回答简短有力、具体可执行。用户当前待办：\n${ctx}\n\n拆解任务时每步用"•"开头，控制在3-5步。\n\n用户问：${msg}`}]}]}),
+        body:JSON.stringify({contents:[{parts:[{text:`你是一个ADHD专属效率助手。风格：简短有力，具体可执行，多用emoji鼓励，不说教。用户当前待办：\n${ctx}\n\n拆解任务时每步用"•"开头，控制在3-5步，每步要荒谬地简单。\n\n用户：${msg}`}]}]}),
       });
       const data=await res.json();
       if(data.error)throw new Error(data.error.message);
       const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"出错了，请重试。";
       setMsgs(m=>[...m,{role:"ai",text:reply}]);
-      if(btid){
-        const steps=reply.split("\n").filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim()).filter(Boolean);
-        if(steps.length)onSubtasksAdded(btid,steps);
-      }
+      if(btid){const steps=reply.split("\n").filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim()).filter(Boolean);if(steps.length)onSubtasksAdded(btid,steps);}
     }catch(e){setMsgs(m=>[...m,{role:"ai",text:`错误：${e.message}`}]);}
     setLoading(false);
   }
   if(!open)return null;
   return<div style={{position:"fixed",right:0,top:0,height:"100%",width:300,background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 20px rgba(0,0,0,.08)"}}>
     <div style={{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-      <span style={{fontSize:14,fontWeight:500}}>✨ AI助手 <span style={{fontSize:11,color:"#aaa"}}>(Gemini)</span></span>
+      <span style={{fontSize:14,fontWeight:500}}>✨ AI <span style={{fontSize:11,color:"#aaa"}}>Gemini</span></span>
       <div style={{display:"flex",gap:6}}>
         <button onClick={()=>setShowKey(v=>!v)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"2px 7px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}}>{apiKey?"🔑 已设置":"🔑 设置Key"}</button>
         <button onClick={onClose} style={{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>关闭</button>
@@ -487,13 +655,11 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef}){
         <input defaultValue={apiKey} placeholder="AIza..." id="gkey" style={{flex:1,fontSize:12,padding:"5px 8px",border:"0.5px solid #ccc",borderRadius:5}}/>
         <button onClick={()=>saveKey(document.getElementById("gkey").value.trim())} style={{fontSize:12,padding:"5px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}}>保存</button>
       </div>
-      <div style={{fontSize:11,color:"#999",marginTop:6}}>
-        获取：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a>
-      </div>
+      <div style={{fontSize:11,color:"#999",marginTop:6}}>获取：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a></div>
     </div>}
     <div ref={msgRef} style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}}>
       {msgs.map((m,i)=><div key={i} style={{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#666",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>{m.text}</div>)}
-      {loading&&<div style={{fontSize:13,color:"#aaa",fontStyle:"italic"}}>思考中…</div>}
+      {loading&&<div style={{fontSize:13,color:"#aaa",fontStyle:"italic"}} className="pulse">思考中…</div>}
     </div>
     <div style={{padding:12,borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
       <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send(input)} placeholder="问我任何事…" style={{flex:1,fontSize:13,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6}}/>
@@ -502,10 +668,577 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef}){
   </div>;
 }
 
-/* ───────────────── App ───────────────── */
+/* ═══════════════════════════════════════════
+   SETTINGS PANEL
+═══════════════════════════════════════════ */
+function SettingsPanel({onClose,onSynced}){
+  const [token,setToken]=useState(()=>lsGet("zj_gh_token",""));
+  const [gistId,setGistId]=useState(()=>lsGet("zj_gist_id",""));
+  const [status,setStatus]=useState("idle");
+  const [msg,setMsg]=useState("");
+  async function connect(){
+    if(!token.trim()){setMsg("请输入 Token");return;}
+    setStatus("saving");setMsg("");
+    try{
+      let id=gistId;
+      if(!id){id=await gistCreate(token.trim());lsSet("zj_gist_id",id);setGistId(id);}
+      lsSet("zj_gh_token",token.trim());
+      setStatus("saved");setMsg("✓ 连接成功！数据将自动同步到 GitHub Gist");
+      onSynced(token.trim(),id);
+    }catch(e){setStatus("error");setMsg("连接失败："+e.message);}
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+      <div style={{padding:"20px 24px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:15,fontWeight:600}}>⚙️ 数据同步设置</span>
+        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:16}}>
+        <div style={{background:"#EBF3FB",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#185FA5",lineHeight:1.6}}>
+          数据存储在你的 GitHub Gist（私有），任何设备打开都能同步。Token 只存在本地浏览器，不经过任何服务器。
+        </div>
+        <div>
+          <div style={{fontSize:12,color:"#666",marginBottom:6}}>GitHub Personal Access Token（gist 权限）</div>
+          <input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="ghp_..." style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+          <div style={{fontSize:11,color:"#aaa",marginTop:4}}>没有 Token？→ GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → 只勾 gist 权限</div>
+        </div>
+        {gistId&&<div style={{fontSize:12,color:"#0F6E56"}}>✓ 已绑定 Gist: {gistId.slice(0,8)}…</div>}
+        {msg&&<div style={{fontSize:13,color:status==="saved"?"#0F6E56":"#A32D2D"}}>{msg}</div>}
+        <button onClick={connect} style={{padding:"10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>
+          {gistId?"重新连接":"连接 GitHub Gist"}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   MAIN APP
+═══════════════════════════════════════════ */
+// ═══════════════════════════════════════════
+// LEARNING MODULE
+// ═══════════════════════════════════════════
+
+const PLATFORMS=[
+  {id:"bilibili",name:"B站",color:"#fb7299"},
+  {id:"baidu",name:"百度云",color:"#2932e1"},
+  {id:"local",name:"本地",color:"#0F6E56"},
+  {id:"online",name:"在线课程",color:"#854F0B"},
+  {id:"other",name:"其他",color:"#888"},
+];
+
+const BLANK_COURSE={
+  id:0,title:"",platform:"bilibili",link:"",
+  totalEpisodes:0,episodes:[],
+  notes:[],assignments:[],
+  active:true,archived:false,
+  lastStudied:null,createdAt:"",
+  color:"#185FA5",
+};
+
+const BLANK_EPISODE={id:0,title:"",status:"todo",duration:"",noteIds:[]};
+// status: todo | doing | done | review
+
+const BLANK_NOTE={
+  id:0,episodeId:null,courseId:0,
+  title:"",content:"",filePath:"",
+  aiSummary:"",aiActions:[],
+  createdAt:"",updatedAt:"",
+};
+
+function daysSince(dateStr){
+  if(!dateStr)return999;
+  return Math.floor((Date.now()-new Date(dateStr).getTime())/86400000);
+}
+
+function getLearningLog(courses){
+  // returns map of dateStr -> minutes studied
+  const log={};
+  courses.forEach(c=>{
+    (c.studyLog||[]).forEach(({date,minutes})=>{
+      log[date]=(log[date]||0)+minutes;
+    });
+  });
+  return log;
+}
+
+// ── Heatmap ──
+function LearningHeatmap({courses}){
+  const log=getLearningLog(courses);
+  const today=new Date();
+  const cells=[];
+  for(let i=89;i>=0;i--){
+    const d=new Date(today);d.setDate(d.getDate()-i);
+    const k=yyyymmdd(d);
+    const mins=log[k]||0;
+    cells.push({k,mins,d});
+  }
+  const weeks=[];
+  let week=[];
+  cells.forEach((c,i)=>{
+    week.push(c);
+    if(week.length===7||(i===cells.length-1)){weeks.push(week);week=[];}
+  });
+  function getColor(mins){
+    if(!mins)return"#f0ede8";
+    if(mins<20)return"#c6e6c6";
+    if(mins<45)return"#74c474";
+    return"#2d9c2d";
+  }
+  const totalDays=cells.filter(c=>c.mins>0).length;
+  const totalMins=cells.reduce((a,c)=>a+c.mins,0);
+  return<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+      <span style={{fontSize:13,fontWeight:500}}>过去90天学习记录</span>
+      <span style={{fontSize:12,color:"#888"}}>{totalDays}天有学习 · 共{Math.round(totalMins/60)}小时</span>
+    </div>
+    <div style={{display:"flex",gap:3}}>
+      {weeks.map((w,wi)=><div key={wi} style={{display:"flex",flexDirection:"column",gap:3}}>
+        {w.map(c=><div key={c.k} title={`${c.k}: ${c.mins}分钟`} style={{width:10,height:10,borderRadius:2,background:getColor(c.mins),cursor:"default"}}/>)}
+      </div>)}
+    </div>
+    <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8,fontSize:11,color:"#aaa"}}>
+      <span>少</span>
+      {["#f0ede8","#c6e6c6","#74c474","#2d9c2d"].map(c=><div key={c} style={{width:10,height:10,borderRadius:2,background:c}}/>)}
+      <span>多</span>
+    </div>
+  </div>;
+}
+
+// ── Focus Mode ──
+function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
+  const [minutes,setMinutes]=useState(0);
+  const [noteText,setNoteText]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [done,setDone]=useState(false);
+  useEffect(()=>{
+    const t=setInterval(()=>setMinutes(m=>m+1),60000);
+    return()=>clearInterval(t);
+  },[]);
+  async function finish(){
+    setSaving(true);
+    if(noteText.trim())await onSaveNote(noteText,episode?.id);
+    onComplete(minutes||1);
+    setDone(true);setSaving(false);
+  }
+  return<div style={{position:"fixed",inset:0,background:"#1a1a1a",zIndex:500,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff"}}>
+    <button onClick={onExit} style={{position:"absolute",top:20,right:24,background:"none",border:"none",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>✕ 退出专注</button>
+    {!done?<>
+      <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:8,letterSpacing:".1em",textTransform:"uppercase"}}>{course.title}</div>
+      <div style={{fontSize:22,fontWeight:600,marginBottom:4,maxWidth:500,textAlign:"center"}}>{episode?.title||"学习中"}</div>
+      <div style={{fontSize:13,color:"rgba(255,255,255,.5)",marginBottom:48}}>已学习 {minutes} 分钟</div>
+      <div style={{width:"100%",maxWidth:500,marginBottom:32}}>
+        <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:8}}>学习笔记（可选，学完再写）</div>
+        <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} placeholder={"随手记下想法、重点、疑问…\n\n学完之后AI会帮你提炼关键点"} rows={6} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:10,padding:"12px 14px",color:"#fff",fontSize:14,lineHeight:1.7,outline:"none"}}/>
+      </div>
+      <div style={{display:"flex",gap:12}}>
+        <button onClick={onExit} style={{padding:"10px 24px",background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"}}>暂停，下次继续</button>
+        <button onClick={finish} disabled={saving} style={{padding:"10px 28px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>✓ 完成这一集</button>
+      </div>
+    </>:<div style={{textAlign:"center"}}>
+      <div style={{fontSize:48,marginBottom:16}}>🌟</div>
+      <div style={{fontSize:20,fontWeight:600,marginBottom:8}}>完成了！学了 {minutes} 分钟</div>
+      <div style={{fontSize:14,color:"rgba(255,255,255,.6)",marginBottom:32}}>你比昨天的自己又进了一步</div>
+      <button onClick={onExit} style={{padding:"10px 28px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"}}>回到课程</button>
+    </div>}
+  </div>;
+}
+
+// ── Note Card ──
+function NoteCard({note,onAISummarize,geminiKey,onDelete}){
+  const [expanded,setExpanded]=useState(false);
+  const [loading,setLoading]=useState(false);
+  async function summarize(){
+    if(!geminiKey||!note.content)return;
+    setLoading(true);
+    try{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:`你是一个学习助手。从以下笔记中提炼：1）3个核心要点（每点一句话，用"•"开头）2）1个立即可执行的行动项（用"→"开头）。只返回这4行，不要其他内容。\n\n笔记：${note.content}`}]}]}),
+      });
+      const data=await res.json();
+      const text=data.candidates?.[0]?.content?.parts?.[0]?.text||"";
+      const lines=text.split("\n").filter(l=>l.trim());
+      const points=lines.filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim());
+      const action=lines.find(l=>l.trim().startsWith("→"))?.replace(/^→\s*/,"").trim()||"";
+      onAISummarize(note.id,points,action);
+    }catch(e){}
+    setLoading(false);
+  }
+  return<div style={{background:"#f7f6f3",borderRadius:8,padding:"12px 14px",marginBottom:8}}>
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,fontWeight:500,marginBottom:2}}>{note.title||"无标题笔记"}</div>
+        <div style={{fontSize:11,color:"#aaa"}}>{note.createdAt?.slice(0,10)}{note.filePath&&<span style={{marginLeft:8}}>📁 {note.filePath.split(/[/\\]/).pop()}</span>}</div>
+      </div>
+      <div style={{display:"flex",gap:6,flexShrink:0}}>
+        {note.content&&!note.aiSummary&&<button onClick={summarize} disabled={loading} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>{loading?"分析中…":"AI提炼↗"}</button>}
+        <button onClick={()=>setExpanded(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{expanded?"收起":"展开"}</button>
+        <button onClick={()=>onDelete(note.id)} style={{fontSize:12,color:"#ddd",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>
+    </div>
+    {note.aiSummary&&note.aiSummary.length>0&&<div style={{marginTop:8,padding:"8px 10px",background:"#EBF3FB",borderRadius:6}}>
+      <div style={{fontSize:11,color:"#185FA5",fontWeight:600,marginBottom:4}}>AI提炼</div>
+      {note.aiSummary.map((p,i)=><div key={i} style={{fontSize:12,color:"#333",marginBottom:2}}>• {p}</div>)}
+      {note.aiAction&&<div style={{fontSize:12,color:"#0F6E56",marginTop:4,fontWeight:500}}>→ {note.aiAction}</div>}
+    </div>}
+    {expanded&&note.content&&<div style={{marginTop:8,fontSize:13,color:"#555",lineHeight:1.7,whiteSpace:"pre-wrap",borderTop:"0.5px solid #e0ddd6",paddingTop:8}}>{note.content}</div>}
+  </div>;
+}
+
+// ── Add Note Modal ──
+function AddNoteModal({courseId,episodeId,onSave,onClose}){
+  const [title,setTitle]=useState("");
+  const [content,setContent]=useState("");
+  const [filePath,setFilePath]=useState("");
+  const [tab,setTab]=useState("paste"); // paste | path
+  function save(){
+    if(!title.trim()&&!content.trim()&&!filePath.trim())return;
+    onSave({title:title||"笔记 "+new Date().toLocaleDateString("zh-CN"),content,filePath,episodeId,courseId});
+    onClose();
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}}>
+      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontSize:15,fontWeight:500}}>添加笔记</span>
+        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+        <div>
+          <div style={{fontSize:12,color:"#aaa",marginBottom:4}}>笔记标题</div>
+          <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="这段笔记叫什么…" style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+        </div>
+        <div style={{display:"flex",gap:0,borderBottom:"0.5px solid #e0ddd6",marginBottom:4}}>
+          {[["paste","粘贴内容"],["path","记录文件路径"]].map(([id,l])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 14px",fontSize:13,background:"none",border:"none",cursor:"pointer",color:tab===id?"#1a1a1a":"#888",borderBottom:tab===id?"2px solid #1a1a1a":"2px solid transparent",fontWeight:tab===id?500:400}}>{l}</button>
+          ))}
+        </div>
+        {tab==="paste"&&<div>
+          <div style={{fontSize:12,color:"#aaa",marginBottom:4}}>从插件复制笔记内容粘贴进来，同步备份到Gist</div>
+          <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder={"把插件生成的笔记粘贴到这里…\n\nAI会帮你提炼核心要点和行动项"} rows={8} style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.7}}/>
+        </div>}
+        {tab==="path"&&<div>
+          <div style={{fontSize:12,color:"#aaa",marginBottom:4}}>记录文件在电脑上的位置，方便以后找到</div>
+          <input value={filePath} onChange={e=>setFilePath(e.target.value)} placeholder="例如：/Users/你的名字/Documents/笔记/第1集.md" style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,fontFamily:"monospace"}}/>
+          <div style={{fontSize:11,color:"#bbb",marginTop:6}}>Mac：在Finder找到文件 → 右键 → 显示简介 → 复制路径<br/>Win：在资源管理器找到文件 → 地址栏复制路径</div>
+        </div>}
+      </div>
+      <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button onClick={onClose} style={{padding:"7px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+        <button onClick={save} style={{padding:"7px 16px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>保存笔记</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Course Detail ──
+function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
+  const [showAddNote,setShowAddNote]=useState(false);
+  const [showAddEp,setShowAddEp]=useState(false);
+  const [newEpTitle,setNewEpTitle]=useState("");
+  const [focusEp,setFocusEp]=useState(null);
+  const [showAssign,setShowAssign]=useState(false);
+  const [newAssign,setNewAssign]=useState("");
+  const donePct=course.episodes.length?Math.round(course.episodes.filter(e=>e.status==="done").length/course.episodes.length*100):0;
+  const nextEp=course.episodes.find(e=>e.status==="todo"||e.status==="doing");
+  const daysSinceStudy=daysSince(course.lastStudied);
+
+  function updateEp(epId,changes){
+    const episodes=course.episodes.map(e=>e.id===epId?{...e,...changes}:e);
+    onUpdate({...course,episodes});
+  }
+  function addEp(){
+    if(!newEpTitle.trim())return;
+    const ep={...BLANK_EPISODE,id:Date.now(),title:newEpTitle.trim()};
+    onUpdate({...course,episodes:[...course.episodes,ep]});
+    setNewEpTitle("");setShowAddEp(false);
+  }
+  function addNote(noteData){
+    const note={...BLANK_NOTE,...noteData,id:Date.now(),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    onUpdate({...course,notes:[...(course.notes||[]),note]});
+  }
+  function deleteNote(noteId){onUpdate({...course,notes:(course.notes||[]).filter(n=>n.id!==noteId)});}
+  function aiSummarize(noteId,points,action){
+    const notes=(course.notes||[]).map(n=>n.id===noteId?{...n,aiSummary:points,aiAction:action}:n);
+    onUpdate({...course,notes});
+  }
+  function addAssignment(){
+    if(!newAssign.trim())return;
+    const a={id:Date.now(),title:newAssign.trim(),status:"todo",due:""};
+    onUpdate({...course,assignments:[...(course.assignments||[]),a]});
+    setNewAssign("");
+  }
+  function pushAssignToBoard(a){
+    onAddTaskToBoard({title:`[${course.title}] ${a.title}`,project:2,priority:"normal",due:a.due||""});
+    const assignments=(course.assignments||[]).map(x=>x.id===a.id?{...x,pushed:true}:x);
+    onUpdate({...course,assignments});
+  }
+
+  if(focusEp!==null){
+    const ep=course.episodes[focusEp];
+    return<FocusMode course={course} episode={ep}
+      onComplete={(mins)=>{
+        updateEp(ep.id,{status:"done"});
+        const log=[...(course.studyLog||[]),{date:todayStr(),minutes:mins}];
+        const nextIdx=course.episodes.findIndex((e,i)=>i>focusEp&&e.status==="todo");
+        if(nextIdx>-1)updateEp(course.episodes[nextIdx].id,{status:"doing"});
+        onUpdate({...course,studyLog:log,lastStudied:todayStr()});
+        setFocusEp(null);
+      }}
+      onSaveNote={(text,epId)=>addNote({title:`${ep?.title||""}笔记`,content:text,episodeId:epId,courseId:course.id})}
+      onExit={()=>setFocusEp(null)}
+      geminiKey={geminiKey}/>;
+  }
+
+  const STATUS_MAP={todo:{l:"未开始",c:"#bbb"},doing:{l:"进行中",c:"#854F0B"},done:{l:"✓",c:"#0F6E56"},review:{l:"★复习",c:"#185FA5"}};
+
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"24px 16px"}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:640,boxShadow:"0 12px 48px rgba(0,0,0,.2)",marginBottom:40}}>
+      {/* header */}
+      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <div style={{fontSize:17,fontWeight:600,marginBottom:4}}>{course.title}</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <span style={{fontSize:12,padding:"2px 8px",borderRadius:10,background:PLATFORMS.find(p=>p.id===course.platform)?.color+"22",color:PLATFORMS.find(p=>p.id===course.platform)?.color}}>{PLATFORMS.find(p=>p.id===course.platform)?.name}</span>
+              {course.link&&<a href={course.link} target="_blank" style={{fontSize:12,color:"#185FA5"}}>打开课程↗</a>}
+              {daysSinceStudy>14&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"2px 8px",borderRadius:10}}>⚠ {daysSinceStudy}天没学了</span>}
+            </div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{marginTop:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#888",marginBottom:4}}>
+            <span>进度 {donePct}%</span>
+            <span>{course.episodes.filter(e=>e.status==="done").length}/{course.episodes.length} 集完成</span>
+          </div>
+          <div style={{height:6,background:"#f0ede8",borderRadius:3,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${donePct}%`,background:course.color||"#185FA5",borderRadius:3,transition:"width .3s"}}/>
+          </div>
+        </div>
+        {nextEp&&<div style={{marginTop:10,display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"#EBF3FB",borderRadius:8}}>
+          <span style={{fontSize:12,color:"#185FA5",fontWeight:500}}>▶ 下一集：{nextEp.title||"第"+(course.episodes.indexOf(nextEp)+1)+"集"}</span>
+          <button onClick={()=>setFocusEp(course.episodes.indexOf(nextEp))} style={{marginLeft:"auto",padding:"4px 14px",background:"#185FA5",color:"#fff",border:"none",borderRadius:6,fontSize:12,cursor:"pointer",fontWeight:500}}>开始学习</button>
+        </div>}
+      </div>
+
+      {/* episodes */}
+      <div style={{padding:"14px 20px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:13,fontWeight:500}}>章节列表</span>
+          <button onClick={()=>setShowAddEp(v=>!v)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加</button>
+        </div>
+        {showAddEp&&<div style={{display:"flex",gap:6,marginBottom:10}}>
+          <input value={newEpTitle} onChange={e=>setNewEpTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addEp()} placeholder="集/章节名称" autoFocus style={{flex:1,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+          <button onClick={addEp} style={{padding:"6px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>添加</button>
+        </div>}
+        <div style={{maxHeight:240,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+          {course.episodes.length===0&&<div style={{fontSize:13,color:"#ccc",padding:"16px 0",textAlign:"center"}}>还没有章节，点上面「+添加」</div>}
+          {course.episodes.map((ep,i)=>{
+            const s=STATUS_MAP[ep.status]||STATUS_MAP.todo;
+            const isCurrent=ep.status==="doing";
+            return<div key={ep.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,background:isCurrent?"#EBF3FB":"transparent",border:isCurrent?"0.5px solid #B5D4F4":"0.5px solid transparent"}}>
+              <select value={ep.status} onChange={e=>updateEp(ep.id,{status:e.target.value})} style={{fontSize:11,padding:"2px 4px",border:"0.5px solid #e0ddd6",borderRadius:4,color:s.c,background:"#fff",cursor:"pointer"}}>
+                <option value="todo">未开始</option>
+                <option value="doing">进行中</option>
+                <option value="done">✓ 完成</option>
+                <option value="review">★ 复习</option>
+              </select>
+              <span style={{flex:1,fontSize:13,color:ep.status==="done"?"#aaa":"#1a1a1a",textDecoration:ep.status==="done"?"line-through":"none"}}>{i+1}. {ep.title||"第"+(i+1)+"集"}</span>
+              <button onClick={()=>setFocusEp(i)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"1px 6px"}}>▶</button>
+            </div>;
+          })}
+        </div>
+      </div>
+
+      {/* notes */}
+      <div style={{padding:"14px 20px",borderBottom:"0.5px solid #e0ddd6"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:13,fontWeight:500}}>笔记 ({(course.notes||[]).length})</span>
+          <button onClick={()=>setShowAddNote(true)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加笔记</button>
+        </div>
+        {(course.notes||[]).length===0&&<div style={{fontSize:13,color:"#ccc",padding:"8px 0",textAlign:"center"}}>还没有笔记</div>}
+        {(course.notes||[]).map(n=><NoteCard key={n.id} note={n} onAISummarize={aiSummarize} geminiKey={geminiKey} onDelete={deleteNote}/>)}
+      </div>
+
+      {/* assignments */}
+      <div style={{padding:"14px 20px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:13,fontWeight:500}}>作业 / 练习</span>
+          <button onClick={()=>setShowAssign(v=>!v)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加</button>
+        </div>
+        {showAssign&&<div style={{display:"flex",gap:6,marginBottom:10}}>
+          <input value={newAssign} onChange={e=>setNewAssign(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addAssignment()} placeholder="作业/练习名称" autoFocus style={{flex:1,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+          <button onClick={addAssignment} style={{padding:"6px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>添加</button>
+        </div>}
+        {(course.assignments||[]).map(a=><div key={a.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
+          <span style={{flex:1,fontSize:13}}>{a.title}</span>
+          {!a.pushed?<button onClick={()=>pushAssignToBoard(a)} style={{fontSize:11,color:"#0F6E56",background:"none",border:"0.5px solid #0F6E56",borderRadius:4,padding:"2px 8px",cursor:"pointer"}}>→ 加入任务板</button>
+          :<span style={{fontSize:11,color:"#bbb"}}>已加入任务板</span>}
+        </div>)}
+        {(course.assignments||[]).length===0&&<div style={{fontSize:13,color:"#ccc",textAlign:"center",padding:"8px 0"}}>没有作业</div>}
+      </div>
+    </div>
+    {showAddNote&&<AddNoteModal courseId={course.id} episodeId={null} onSave={addNote} onClose={()=>setShowAddNote(false)}/>}
+  </div>;
+}
+
+// ── Add Course Modal ──
+function AddCourseModal({onSave,onClose}){
+  const [f,setF]=useState({title:"",platform:"bilibili",link:"",totalEpisodes:"",color:"#185FA5"});
+  const COLORS=["#185FA5","#0F6E56","#993C1D","#854F0B","#533AB7","#fb7299"];
+  function save(){
+    if(!f.title.trim())return;
+    onSave({...BLANK_COURSE,...f,totalEpisodes:parseInt(f.totalEpisodes)||0,episodes:[],id:Date.now(),createdAt:todayStr(),active:true});
+    onClose();
+  }
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}}>
+      <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between"}}>
+        <span style={{fontSize:15,fontWeight:500}}>添加课程</span>
+        <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+        {[["课程名称",<input key="t" value={f.title} onChange={e=>setF(x=>({...x,title:e.target.value}))} placeholder="例如：Python进阶课程" autoFocus style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+          ["平台",<select key="p" value={f.platform} onChange={e=>setF(x=>({...x,platform:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>{PLATFORMS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>],
+          ["课程链接（可选）",<input key="l" value={f.link} onChange={e=>setF(x=>({...x,link:e.target.value}))} placeholder="https://..." style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+          ["总集数（可选）",<input key="e" type="number" value={f.totalEpisodes} onChange={e=>setF(x=>({...x,totalEpisodes:e.target.value}))} placeholder="0" style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+        ].map(([l,el])=><div key={l}><div style={{fontSize:12,color:"#aaa",marginBottom:4}}>{l}</div>{el}</div>)}
+        <div><div style={{fontSize:12,color:"#aaa",marginBottom:6}}>颜色标签</div>
+          <div style={{display:"flex",gap:8}}>{COLORS.map(c=><div key={c} onClick={()=>setF(x=>({...x,color:c}))} style={{width:24,height:24,borderRadius:"50%",background:c,cursor:"pointer",border:f.color===c?"3px solid #1a1a1a":"3px solid transparent"}}/>)}</div>
+        </div>
+      </div>
+      <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"flex-end",gap:8}}>
+        <button onClick={onClose} style={{padding:"7px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+        <button onClick={save} style={{padding:"7px 16px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>添加课程</button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Course Card ──
+function CourseCard({course,onOpen,onToggleActive,onArchive}){
+  const p=PLATFORMS.find(x=>x.id===course.platform)||PLATFORMS[4];
+  const donePct=course.episodes.length?Math.round(course.episodes.filter(e=>e.status==="done").length/course.episodes.length*100):0;
+  const nextEp=course.episodes.find(e=>e.status==="todo"||e.status==="doing");
+  const stale=daysSince(course.lastStudied)>14&&course.active;
+  return<div style={{background:"#fff",border:`0.5px solid ${stale?"#f0b8b8":"#e0ddd6"}`,borderRadius:12,padding:"16px 18px",cursor:"pointer"}} onClick={()=>onOpen(course)}>
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+          <div style={{width:10,height:10,borderRadius:3,background:course.color||"#185FA5",flexShrink:0}}/>
+          <span style={{fontSize:15,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{course.title}</span>
+        </div>
+        <span style={{fontSize:11,padding:"2px 8px",borderRadius:10,background:p.color+"22",color:p.color}}>{p.name}</span>
+      </div>
+      <div style={{fontSize:16,fontWeight:600,color:donePct===100?"#0F6E56":"#1a1a1a",flexShrink:0,marginLeft:8}}>{donePct}%</div>
+    </div>
+    <div style={{height:5,background:"#f0ede8",borderRadius:3,overflow:"hidden",marginBottom:8}}>
+      <div style={{height:"100%",width:`${donePct}%`,background:course.color||"#185FA5",borderRadius:3,transition:"width .3s"}}/>
+    </div>
+    {nextEp&&<div style={{fontSize:12,color:"#555",marginBottom:6}}>▶ 下一集：<span style={{color:"#185FA5"}}>{nextEp.title||"第"+(course.episodes.indexOf(nextEp)+1)+"集"}</span></div>}
+    {stale&&<div style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",borderRadius:6,padding:"3px 8px",display:"inline-block",marginTop:2}}>⚠ {daysSince(course.lastStudied)}天没学了，要继续吗？</div>}
+    {!nextEp&&donePct===100&&<div style={{fontSize:12,color:"#0F6E56"}}>🎉 已完成！</div>}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}} onClick={e=>e.stopPropagation()}>
+      <span style={{fontSize:11,color:"#bbb"}}>{(course.notes||[]).length}条笔记 · {course.episodes.filter(e=>e.status==="done").length}/{course.episodes.length}集</span>
+      <button onClick={()=>onArchive(course.id)} style={{fontSize:11,color:"#bbb",background:"none",border:"none",cursor:"pointer"}}>归档</button>
+    </div>
+  </div>;
+}
+
+// ── Learning View (main) ──
+function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey}){
+  const [detail,setDetail]=useState(null);
+  const [showAdd,setShowAdd]=useState(false);
+  const [showInbox,setShowInbox]=useState(false);
+  const [inboxText,setInboxText]=useState("");
+  const [inbox,setInbox]=useState(()=>lsGet("zj_learning_inbox",[]));
+  const [showStandby,setShowStandby]=useState(false);
+
+  const active=courses.filter(c=>c.active&&!c.archived);
+  const standby=courses.filter(c=>!c.active&&!c.archived);
+  const current=active.slice(0,3);
+  const overflow=active.slice(3);
+
+  function saveInbox(items){setInbox(items);lsSet("zj_learning_inbox",items);}
+  function addToInbox(){
+    if(!inboxText.trim())return;
+    saveInbox([...inbox,{id:Date.now(),text:inboxText.trim(),date:todayStr()}]);
+    setInboxText("");
+  }
+  function promoteFromInbox(item){
+    setShowAdd(true);
+    saveInbox(inbox.filter(x=>x.id!==item.id));
+  }
+
+  if(detail){
+    const course=courses.find(c=>c.id===detail);
+    if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey}/>;
+  }
+
+  return<div>
+    <LearningHeatmap courses={courses}/>
+
+    {/* current: max 3 */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <div>
+        <span style={{fontSize:14,fontWeight:500}}>当前学习</span>
+        <span style={{fontSize:12,color:"#aaa",marginLeft:8}}>{current.length}/3</span>
+      </div>
+      <button onClick={()=>setShowAdd(true)} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加课程</button>
+    </div>
+    {current.length===0&&<div style={{background:"#fff",border:"0.5px dashed #e0ddd6",borderRadius:12,padding:"32px",textAlign:"center",marginBottom:16}}>
+      <div style={{fontSize:32,marginBottom:8}}>📚</div>
+      <div style={{fontSize:14,color:"#aaa",marginBottom:12}}>还没有正在学的课程</div>
+      <button onClick={()=>setShowAdd(true)} style={{padding:"8px 20px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"}}>添加第一门课</button>
+    </div>}
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12,marginBottom:20}}>
+      {current.map(c=><CourseCard key={c.id} course={c} onOpen={c=>setDetail(c.id)} onToggleActive={id=>onUpdate({...courses.find(x=>x.id===id),active:!courses.find(x=>x.id===id).active})} onArchive={onArchive}/>)}
+    </div>
+    {current.length>=3&&<div style={{fontSize:12,color:"#854F0B",background:"#FAEEDA",borderRadius:8,padding:"8px 14px",marginBottom:16}}>💡 建议同时学习不超过3门，先完成一门再开始新的</div>}
+
+    {/* standby */}
+    <div style={{marginBottom:20}}>
+      <button onClick={()=>setShowStandby(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"#888",background:"none",border:"none",cursor:"pointer",marginBottom:8}}>
+        {showStandby?"▼":"▶"} 候补课程 ({standby.length + overflow.length})
+        <span style={{fontSize:11,color:"#bbb"}}>— 点击展开，完成一门再开始</span>
+      </button>
+      {showStandby&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8}}>
+        {[...overflow,...standby].map(c=><div key={c.id} onClick={()=>setDetail(c.id)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:8,height:8,borderRadius:2,background:c.color||"#ccc",flexShrink:0}}/>
+          <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.title}</span>
+          <span style={{fontSize:11,color:"#aaa"}}>{PLATFORMS.find(p=>p.id===c.platform)?.name}</span>
+        </div>)}
+      </div>}
+    </div>
+
+    {/* inbox */}
+    <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"14px 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <span style={{fontSize:13,fontWeight:500}}>📥 想学的 Inbox <span style={{fontSize:11,color:"#aaa",fontWeight:400}}>— 随手记，不用管理</span></span>
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:inbox.length?10:0}}>
+        <input value={inboxText} onChange={e=>setInboxText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addToInbox()} placeholder="突然想学什么？先记在这里…" style={{flex:1,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+        <button onClick={addToInbox} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>记下</button>
+      </div>
+      {inbox.map(item=><div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:"0.5px solid #f0ede8"}}>
+        <span style={{flex:1,fontSize:13,color:"#555"}}>{item.text}</span>
+        <span style={{fontSize:11,color:"#bbb"}}>{item.date}</span>
+        <button onClick={()=>promoteFromInbox(item)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>→ 变成课程</button>
+        <button onClick={()=>saveInbox(inbox.filter(x=>x.id!==item.id))} style={{fontSize:12,color:"#ddd",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+      </div>)}
+    </div>
+
+    {showAdd&&<AddCourseModal onSave={c=>{onAdd(c);setShowAdd(false);}} onClose={()=>setShowAdd(false)}/>}
+  </div>;
+}
+
 function App(){
-  const [tasks,setTasks]=useState(()=>loadTasks()||SAMPLE);
-  const [nextId,setNextId]=useState(()=>{const t=loadTasks();return t?Math.max(...t.map(x=>x.id))+1:6;});
+  const [tasks,setTasks]=useState(SAMPLE_TASKS);
+  const [journal,setJournal]=useState({});
+  const [futureLog,setFutureLog]=useState({});
+  const [courses,setCourses]=useState([]);
+  const [nextId,setNextId]=useState(10);
   const [view,setView]=useState("today");
   const [aiOpen,setAiOpen]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
@@ -513,52 +1246,142 @@ function App(){
   const [quick,setQuick]=useState("");
   const [detail,setDetail]=useState(null);
   const [projView,setProjView]=useState(null);
+  const [showMigration,setShowMigration]=useState(false);
+  const [showBrainDump,setShowBrainDump]=useState(false);
+  const [showMonthlyReview,setShowMonthlyReview]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+  const [syncStatus,setSyncStatus]=useState("idle");
+  const [ghToken,setGhToken]=useState(()=>lsGet("zj_gh_token",""));
+  const [gistId,setGistId]=useState(()=>lsGet("zj_gist_id",""));
+  const [geminiKey,setGeminiKey]=useState(()=>lsGet("zj_gemini_key",""));
   const aiRef=useRef(null);
-  useEffect(()=>{saveTasks(tasks);},[tasks]);
+  const saveTimer=useRef(null);
+  const isFirstLoad=useRef(true);
 
-  function toggleTask(id){setTasks(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));}
-  function toggleSub(tid,i){setTasks(ts=>ts.map(t=>{if(t.id!==tid)return t;const sd=[...t.subtaskDone];sd[i]=!sd[i];return{...t,subtaskDone:sd};}));}
-  function toggleExpand(id){setTasks(ts=>ts.map(t=>t.id===id?{...t,expanded:!t.expanded}:t));}
-  function saveDetail(u){setTasks(ts=>ts.map(t=>t.id===u.id?u:t));setDetail(null);}
-  function delTask(id){setTasks(ts=>ts.filter(t=>t.id!==id));setDetail(null);}
-  function addSubsFromAI(tid,steps){setTasks(ts=>ts.map(t=>t.id===tid?{...t,subtasks:steps,subtaskDone:steps.map(()=>false),expanded:true}:t));}
+  // load from gist on mount
+  useEffect(()=>{
+    if(ghToken&&gistId){
+      setSyncStatus("saving");
+      gistLoad(ghToken,gistId).then(data=>{
+        if(data){
+          if(data.tasks)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
+          if(data.journal)setJournal(data.journal);
+          if(data.futureLog)setFutureLog(data.futureLog);
+          if(data.courses)setCourses(data.courses.map(c=>({...BLANK_COURSE,...c})));
+          if(data.nextId)setNextId(data.nextId);
+        }
+        setSyncStatus("saved");
+        isFirstLoad.current=false;
+      }).catch(()=>{setSyncStatus("error");isFirstLoad.current=false;});
+    } else {
+      isFirstLoad.current=false;
+    }
+  },[]);
+
+  // auto-save to gist (debounced)
+  function triggerSave(t,j,fl,nid,cs){
+    if(isFirstLoad.current)return;
+    if(!ghToken||!gistId){return;}
+    setSyncStatus("saving");
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>{
+      gistSave(ghToken,gistId,{tasks:t,journal:j,futureLog:fl,courses:cs!==undefined?cs:courses,nextId:nid})
+        .then(()=>setSyncStatus("saved"))
+        .catch(()=>setSyncStatus("error"));
+    },1500);
+  }
+
+  function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;triggerSave(next,journal,futureLog,nextId,courses);return next;});}
+  function setJournalAndSync(j){setJournal(j);triggerSave(tasks,j,futureLog,nextId,courses);}
+  function setFutureLogAndSync(fl){setFutureLog(fl);triggerSave(tasks,journal,fl,nextId,courses);}
+  function updateCourse(updated){
+    setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+  }
+  function addCourse(c){
+    setCourses(cs=>{const next=[...cs,c];triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+  }
+  function archiveCourse(id){
+    setCourses(cs=>{const next=cs.map(c=>c.id===id?{...c,archived:true,active:false}:c);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+  }
+
+  function toggleTask(id){setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));}
+  function toggleSub(tid,i){setTasksAndSync(ts=>ts.map(t=>{if(t.id!==tid)return t;const sd=[...t.subtaskDone];sd[i]=!sd[i];return{...t,subtaskDone:sd};}));}
+  function toggleExpand(id){setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,expanded:!t.expanded}:t));}
+  function saveDetail(u){setTasksAndSync(ts=>ts.map(t=>t.id===u.id?u:t));setDetail(null);}
+  function delTask(id){setTasksAndSync(ts=>ts.filter(t=>t.id!==id));setDetail(null);}
+  function addSubsFromAI(tid,steps){setTasksAndSync(ts=>ts.map(t=>t.id===tid?{...t,subtasks:steps,subtaskDone:steps.map(()=>false),expanded:true}:t));}
   function aiBreak(id){const t=tasks.find(t=>t.id===id);if(!t)return;setAiOpen(true);setTimeout(()=>{if(aiRef.current)aiRef.current(t);},150);}
 
   function addTask(partial){
+    const newNid=nextId+1;
     const t={...BLANK_TASK,...partial,id:nextId};
-    setTasks(ts=>[...ts,t]);setNextId(n=>n+1);
+    setNextId(newNid);
+    setTasksAndSync(ts=>{const next=[...ts,t];triggerSave(next,journal,futureLog,newNid);return next;});
   }
   function addQuick(){if(!quick.trim())return;addTask({title:quick.trim(),project:1,due:"",priority:"normal"});setQuick("");}
   function addModal(){if(!nTask.title.trim())return;addTask(nTask);setShowAdd(false);setNTask({title:"",project:1,due:todayStr(),startDate:"",priority:"today"});}
+  function addBrainTasks(titles){titles.forEach(title=>addTask({title,project:1,due:"",priority:"normal"}));}
+  function addFutureToTasks(text,mk){
+    const [y,m]=mk.split("-").map(Number);
+    const due=yyyymmdd(new Date(y,m,1));
+    addTask({title:text,project:1,due,priority:"normal"});
+  }
+
+  function handleMigrate(decisions){
+    setTasksAndSync(ts=>ts.map(t=>{
+      const d=decisions[t.id];if(!d)return t;
+      if(d==="drop")return null;
+      const mc=(t.migrateCount||0)+1;
+      if(d==="tomorrow")return{...t,due:daysFromNow(1),migrateCount:mc};
+      if(d==="nextweek")return{...t,due:daysFromNow(7),migrateCount:mc};
+      if(d==="someday")return{...t,due:"",migrateCount:mc};
+      return t;
+    }).filter(Boolean));
+  }
+
+  // check if monthly review should show (first day of month)
+  useEffect(()=>{
+    const d=new Date();if(d.getDate()!==1)return;
+    const key=`review_shown_${monthKey(d.getFullYear(),d.getMonth())}`;
+    if(!lsGet(key))setTimeout(()=>{setShowMonthlyReview(true);lsSet(key,true);},2000);
+  },[]);
 
   const focus=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"||isOverdue(t.due))).slice(0,3);
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail};
-
-  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"projects",l:"项目",i:"📁"}];
+  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"}];
 
   return<div style={{display:"flex",height:"100vh",background:"#f7f6f3",fontSize:14,overflow:"hidden"}}>
     {/* sidebar */}
     <div style={{width:190,background:"#fff",borderRight:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
-      <div style={{padding:"0 16px 20px",fontSize:15,fontWeight:600}}>🧠 专注板</div>
-      {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id?"#1a1a1a":"#666",fontWeight:view===n.id?500:400,background:view===n.id?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
-      <div style={{fontSize:11,color:"#bbb",padding:"14px 16px 4px",textTransform:"uppercase",letterSpacing:".06em"}}>我的项目</div>
+      <div style={{padding:"0 16px 16px",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span>🧠 专注板</span>
+        <button onClick={()=>setShowSettings(true)} title="同步设置" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:ghToken?"#0F6E56":"#bbb"}}>
+          {ghToken?"☁️":"⚙️"}
+        </button>
+      </div>
+      {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id&&!projView?"#1a1a1a":"#666",fontWeight:view===n.id&&!projView?500:400,background:view===n.id&&!projView?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
+      <div style={{fontSize:11,color:"#bbb",padding:"14px 16px 4px",textTransform:"uppercase",letterSpacing:".06em"}}>项目</div>
       {PROJECTS.map(p=><div key={p.id} onClick={()=>{setView("projects");setProjView(p);}} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 16px",fontSize:13,color:projView?.id===p.id?"#1a1a1a":"#666",background:projView?.id===p.id?"#f0ede8":"transparent",cursor:"pointer"}}>
         <span style={{width:8,height:8,borderRadius:"50%",background:p.color,flexShrink:0}}/>{p.name}
       </div>)}
       <div style={{flex:1}}/>
-      <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent",borderTop:"0.5px solid #e0ddd6"}}>
-        ✨ AI助手
+      <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
+        <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
+        <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
+        <div onClick={()=>setShowMonthlyReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>📅 月度回顾</div>
+        <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
       </div>
     </div>
 
     {/* main */}
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",transition:"margin-right .2s",marginRight:aiOpen?300:0}}>
       <div style={{background:"#fff",borderBottom:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <span style={{fontSize:16,fontWeight:500}}>
-          {projView?projView.name:navTop.find(n=>n.id===view)?.l||""}
-        </span>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:16,fontWeight:500}}>{projView?projView.name:navTop.find(n=>n.id===view)?.l||""}</span>
+          <SyncBadge status={syncStatus}/>
+        </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           <span style={{fontSize:13,color:"#aaa"}}>{new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"})}</span>
           <button onClick={()=>setShowAdd(true)} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>+ 添加任务</button>
@@ -566,7 +1389,6 @@ function App(){
       </div>
 
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
-        {/* today */}
         {view==="today"&&<>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
             {[["今日重点",focus.length],["待处理",tasks.filter(t=>!t.done).length],["已完成",done.length]].map(([l,v])=>(
@@ -585,62 +1407,51 @@ function App(){
           {other.length>0&&<><div style={{fontSize:13,fontWeight:500,marginBottom:10,color:"#888"}}>其他待办</div>{other.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
           {done.length>0&&<><div style={{fontSize:13,fontWeight:500,margin:"18px 0 10px",color:"#bbb"}}>已完成 ({done.length})</div>{done.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
         </>}
-
-        {/* all */}
         {view==="all"&&<>
           {tasks.filter(t=>!t.done).map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}
           {done.length>0&&<><div style={{fontSize:13,fontWeight:500,margin:"18px 0 10px",color:"#bbb"}}>已完成</div>{done.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
         </>}
-
-        {/* calendar */}
-        {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask}/>}
-
-        {/* projects */}
+        {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
+        {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
+        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
-          :<>{PROJECTS.map(p=>{
-            const pts=tasks.filter(t=>t.project===p.id);
-            const d=pts.filter(t=>t.done).length;
-            const pct=pts.length?Math.round(d/pts.length*100):0;
-            return<div key={p.id} onClick={()=>setProjView(p)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:12,cursor:"pointer"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <span style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}/>
-                <span style={{fontSize:15,fontWeight:500}}>{p.name}</span>
-                <span style={{marginLeft:"auto",fontSize:13,color:"#aaa"}}>{d}/{pts.length} 完成</span>
-              </div>
-              <div style={{height:4,background:"#f0ede8",borderRadius:2,overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${pct}%`,background:p.color,borderRadius:2}}/>
-              </div>
-              <div style={{fontSize:12,color:"#bbb",marginTop:6}}>{pts.filter(t=>!t.done&&t.priority==="urgent").length} 个紧急任务</div>
-            </div>;
-          })}</>
+          :<>{PROJECTS.map(p=>{const pts=tasks.filter(t=>t.project===p.id);const d=pts.filter(t=>t.done).length;const pct=pts.length?Math.round(d/pts.length*100):0;return<div key={p.id} onClick={()=>setProjView(p)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:12,cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}><span style={{width:10,height:10,borderRadius:"50%",background:p.color,flexShrink:0}}/><span style={{fontSize:15,fontWeight:500}}>{p.name}</span><span style={{marginLeft:"auto",fontSize:13,color:"#aaa"}}>{d}/{pts.length} 完成</span></div>
+            <div style={{height:4,background:"#f0ede8",borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${pct}%`,background:p.color,borderRadius:2}}/></div>
+            <div style={{fontSize:12,color:"#bbb",marginTop:6}}>{pts.filter(t=>!t.done&&t.priority==="urgent").length} 个紧急任务</div>
+          </div>;})}
+          </>
         )}
       </div>
 
-      {/* quick add bar */}
       <div style={{background:"#fff",borderTop:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",gap:10,flexShrink:0}}>
         <input value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addQuick()} placeholder="快速添加任务…" style={{flex:1,padding:"8px 12px",border:"0.5px solid #ccc",borderRadius:7,fontSize:13}}/>
         <button onClick={addQuick} style={{padding:"8px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>添加↵</button>
+        <button onClick={()=>setShowBrainDump(true)} style={{padding:"8px 12px",border:"0.5px solid #e0ddd6",background:"#f7f6f3",borderRadius:7,fontSize:13,cursor:"pointer",color:"#666"}}>🧠</button>
         <button onClick={()=>setAiOpen(true)} style={{padding:"8px 14px",border:"0.5px solid #B5D4F4",background:"#EBF3FB",color:"#185FA5",borderRadius:7,fontSize:13,cursor:"pointer"}}>✨ AI</button>
       </div>
     </div>
 
-    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef}/>
+    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey}/>
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
+    {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
+    {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
+    {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
+    {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);}}/>}
 
-    {/* add modal */}
     {showAdd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#fff",borderRadius:12,padding:24,width:400,boxShadow:"0 8px 40px rgba(0,0,0,.15)"}}>
+      <div style={{background:"#fff",borderRadius:12,padding:24,width:400,boxShadow:"0 8px 40px rgba(0,0,0,.15)"}} className="fade-in">
         <div style={{fontSize:15,fontWeight:500,marginBottom:16}}>添加任务</div>
         {[["任务名称",<input key="t" value={nTask.title} onChange={e=>setNTask(n=>({...n,title:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addModal()} placeholder="输入任务名称…" autoFocus style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
           ["所属项目",<select key="p" value={nTask.project} onChange={e=>setNTask(n=>({...n,project:parseInt(e.target.value)}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>{PROJECTS.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>],
           ["开始日期",<input key="s" type="date" value={nTask.startDate} onChange={e=>setNTask(n=>({...n,startDate:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
           ["截止日期",<input key="d" type="date" value={nTask.due} onChange={e=>setNTask(n=>({...n,due:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
-          ["优先级",<select key="pr" value={nTask.priority} onChange={e=>setNTask(n=>({...n,priority:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}><option value="urgent">🔴 紧急</option><option value="today">🟡 今天完成</option><option value="normal">⚪ 普通</option></select>],
+          ["优先级",<select key="pr" value={nTask.priority} onChange={e=>setNTask(n=>({...n,priority:e.target.value}))} style={{width:"100%",padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}><option value="urgent">🔴 紧急</option><option value="today">🟡 今天</option><option value="normal">⚪ 普通</option></select>],
         ].map(([l,el])=><div key={l} style={{marginBottom:12}}><div style={{fontSize:12,color:"#777",marginBottom:4}}>{l}</div>{el}</div>)}
         <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:18}}>
-          <Btn onClick={()=>setShowAdd(false)}>取消</Btn>
-          <Btn primary onClick={addModal}>保存任务</Btn>
+          <button onClick={()=>setShowAdd(false)} style={{padding:"7px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+          <button onClick={addModal} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>保存任务</button>
         </div>
       </div>
     </div>}
