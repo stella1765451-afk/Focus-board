@@ -14,6 +14,16 @@ input,select,button,textarea{font-family:inherit}
 input:focus,select:focus,textarea:focus{outline:2px solid #185FA5;outline-offset:1px}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
+@media(max-width:640px){
+  .sidebar-desktop{display:none!important}
+  .sidebar-mobile-open{display:flex!important}
+  .main-area{margin-right:0!important}
+  .ai-panel-mobile{width:100vw!important;width:100dvw!important}
+}
+@media(min-width:641px){
+  .mobile-menu-btn{display:none!important}
+  .sidebar-desktop{display:flex!important}
+}
 textarea{resize:vertical}
 .fade-in{animation:fadeIn .2s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
@@ -287,7 +297,7 @@ function BrainDump({onClose,onAddTasks,apiKey}){
     if(!apiKey){setResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
     setLoading(true);
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:`用户现在脑子很乱，把以下内容分类整理成JSON。分为：tasks（需要做的事，数组，每项有title字符串）、worries（担忧/焦虑，数组字符串）、ideas（想法/灵感，数组字符串）。只返回JSON，不要其他文字。\n\n用户内容：${text}`}]}]}),
       });
@@ -614,63 +624,180 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
    AI PANEL (Gemini)
 ═══════════════════════════════════════════ */
 function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
-  const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 帮你理清思路\n\n有什么需要帮忙的？"}]);
+  const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 帮你理清思路\n• 分析截图或图片\n\n有什么需要帮忙的？",images:[]}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const [showKey,setShowKey]=useState(false);
+  const [pendingImgs,setPendingImgs]=useState([]);
   const msgRef=useRef(null);
+  const fileRef=useRef(null);
   useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
-  useEffect(()=>{if(sendRef)sendRef.current=(task)=>send(`帮我把这个任务拆成3-5个具体小步骤：${task.title}`,task.id);});
+  useEffect(()=>{if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆成3-5个具体小步骤："+task.title,task.id,[]);});
   function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
-  async function send(text,btid){
-    if(!text||!text.trim()||loading)return;
+
+  function openNewWin(){
+    const k=apiKey;
+    const w=window.open("","aiwin","width=620,height=700,resizable=yes");
+    if(!w)return;
+    const doc=w.document;
+    doc.open();
+    doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>AI助手</title>'
+      +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#f7f6f3;display:flex;height:100vh;flex-direction:column}'
+      +'#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}'
+      +'.am{font-size:13px;line-height:1.65;background:#fff;padding:10px 12px;border-radius:8px;white-space:pre-wrap}'
+      +'.um{font-size:13px;color:#666;font-style:italic;text-align:right;padding:4px 0;line-height:1.65}'
+      +'#bar{padding:10px;border-top:1px solid #e0ddd6;background:#fff;display:flex;gap:8px}'
+      +'#inp{flex:1;padding:8px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit}'
+      +'button{padding:8px 14px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}'
+      +'</style></head><body>'
+      +'<div id="msgs"><div class="am">✨ 独立AI窗口 — 在这里可以自由对话</div></div>'
+      +'<div id="bar"><input id="inp" placeholder="输入消息，Enter发送…"/><button onclick="go()">发送</button></div>'
+      +'<script>'
+      +'var key="'+k+'";'
+      +'var el=document.getElementById("msgs");'
+      +'var inp=document.getElementById("inp");'
+      +'inp.addEventListener("keydown",function(e){if(e.key==="Enter")go();});'
+      +'async function go(){'
+      +'  var t=inp.value.trim();if(!t)return;inp.value="";'
+      +'  el.innerHTML+="<div class=\\"um\\">"+t+"</div>";'
+      +'  el.innerHTML+="<div class=\\"am\\" id=\\"ty\\">思考中…</div>";'
+      +'  el.scrollTop=9999;'
+      +'  var models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];'
+      +'  var reply="出错了";'
+      +'  for(var i=0;i<models.length;i++){'
+      +'    try{'
+      +'      var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+models[i]+":generateContent?key="+key,{'
+      +'        method:"POST",headers:{"Content-Type":"application/json"},'
+      +'        body:JSON.stringify({contents:[{parts:[{text:"你是ADHD效率助手，简短有力，多用emoji。用户："+t}]}]})'
+      +'      });'
+      +'      var d=await r.json();'
+      +'      if(d.error&&(d.error.code===404||d.error.status==="NOT_FOUND"))continue;'
+      +'      reply=d.candidates&&d.candidates[0]&&d.candidates[0].content&&d.candidates[0].content.parts&&d.candidates[0].content.parts[0]&&d.candidates[0].content.parts[0].text||"无回复";'
+      +'      break;'
+      +'    }catch(e){continue;}'
+      +'  }'
+      +'  var ty=document.getElementById("ty");'
+      +'  if(ty){ty.id="";ty.textContent=reply;}'
+      +'  el.scrollTop=9999;'
+      +'}'
+      +'<\/script></body></html>');
+    doc.close();
+  }
+
+  function handleFile(e){
+    Array.from(e.target.files).forEach(function(file){
+      if(!file.type.startsWith("image/"))return;
+      var r=new FileReader();
+      r.onload=function(ev){
+        var b64=ev.target.result.split(",")[1];
+        setPendingImgs(function(imgs){return[...imgs,{preview:ev.target.result,data:b64,type:file.type,name:file.name}];});
+      };
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function callGemini(key,prompt){
+    var models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];
+    for(var i=0;i<models.length;i++){
+      try{
+        var res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+models[i]+":generateContent?key="+key,{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({contents:prompt}),
+        });
+        var data=await res.json();
+        if(data.error){
+          if(data.error.code===404||data.error.status==="NOT_FOUND")continue;
+          throw new Error(data.error.message);
+        }
+        return(data.candidates&&data.candidates[0]&&data.candidates[0].content&&data.candidates[0].content.parts&&data.candidates[0].content.parts[0]&&data.candidates[0].content.parts[0].text)||"";
+      }catch(e){
+        if(e.message&&(e.message.includes("not found")||e.message.includes("NOT_FOUND")))continue;
+        throw e;
+      }
+    }
+    throw new Error("所有模型不可用，请检查Key权限");
+  }
+
+  async function doSend(text,btid,imgOverride){
+    var imgs=imgOverride!==undefined?imgOverride:pendingImgs;
+    if((!text||!text.trim())&&!imgs.length)return;
+    if(loading)return;
     if(!apiKey){setShowKey(true);return;}
-    const msg=text.trim();setInput("");setMsgs(m=>[...m,{role:"user",text:msg}]);setLoading(true);
-    const ctx=tasks.filter(t=>!t.done).map(t=>`- ${t.title}（${getProj(t.project).name}，${t.priority}）`).join("\n");
+    var msg=(text||"").trim();
+    setInput("");setPendingImgs([]);
+    setMsgs(function(m){return[...m,{role:"user",text:msg,images:imgs.map(function(p){return p.preview;})}];});
+    setLoading(true);
+    var ctx=tasks.filter(function(t){return!t.done;}).map(function(t){return"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）";}).join("\n");
+    var sys="你是一个ADHD专属效率助手。风格：简短有力，具体可执行，多用emoji鼓励，不说教。用户当前待办：\n"+ctx+"\n\n拆解任务时每步用'•'开头，控制在3-5步，每步要荒谬地简单。";
+    var parts=[{text:sys+"\n\n用户："+msg}];
+    imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({contents:[{parts:[{text:`你是一个ADHD专属效率助手。风格：简短有力，具体可执行，多用emoji鼓励，不说教。用户当前待办：\n${ctx}\n\n拆解任务时每步用"•"开头，控制在3-5步，每步要荒谬地简单。\n\n用户：${msg}`}]}]}),
-      });
-      const data=await res.json();
-      if(data.error)throw new Error(data.error.message);
-      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"出错了，请重试。";
-      setMsgs(m=>[...m,{role:"ai",text:reply}]);
-      if(btid){const steps=reply.split("\n").filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim()).filter(Boolean);if(steps.length)onSubtasksAdded(btid,steps);}
-    }catch(e){setMsgs(m=>[...m,{role:"ai",text:`错误：${e.message}`}]);}
+      var reply=await callGemini(apiKey,[{parts:parts}]);
+      setMsgs(function(m){return[...m,{role:"ai",text:reply,images:[]}];});
+      if(btid){
+        var steps=reply.split("\n").filter(function(l){return l.trim().startsWith("•");}).map(function(l){return l.replace(/^•\s*/,"").trim();}).filter(Boolean);
+        if(steps.length)onSubtasksAdded(btid,steps);
+      }
+    }catch(e){
+      setMsgs(function(m){return[...m,{role:"ai",text:"错误："+e.message+"\n\n提示：请到 aistudio.google.com 重新生成免费Key",images:[]}];});
+    }
     setLoading(false);
   }
+
   if(!open)return null;
-  return<div style={{position:"fixed",right:0,top:0,height:"100%",width:300,background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 20px rgba(0,0,0,.08)"}}>
-    <div style={{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-      <span style={{fontSize:14,fontWeight:500}}>✨ AI <span style={{fontSize:11,color:"#aaa"}}>Gemini</span></span>
-      <div style={{display:"flex",gap:6}}>
-        <button onClick={()=>setShowKey(v=>!v)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"2px 7px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}}>{apiKey?"🔑 已设置":"🔑 设置Key"}</button>
-        <button onClick={onClose} style={{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>关闭</button>
-      </div>
-    </div>
-    {showKey&&<div style={{padding:12,background:"#fffbe6",borderBottom:"0.5px solid #e8e0c0"}}>
-      <div style={{fontSize:12,color:"#666",marginBottom:6}}>Gemini API Key：</div>
-      <div style={{display:"flex",gap:6}}>
-        <input defaultValue={apiKey} placeholder="AIza..." id="gkey" style={{flex:1,fontSize:12,padding:"5px 8px",border:"0.5px solid #ccc",borderRadius:5}}/>
-        <button onClick={()=>saveKey(document.getElementById("gkey").value.trim())} style={{fontSize:12,padding:"5px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}}>保存</button>
-      </div>
-      <div style={{fontSize:11,color:"#999",marginTop:6}}>获取：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a></div>
-    </div>}
-    <div ref={msgRef} style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}}>
-      {msgs.map((m,i)=><div key={i} style={{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#666",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>{m.text}</div>)}
-      {loading&&<div style={{fontSize:13,color:"#aaa",fontStyle:"italic"}} className="pulse">思考中…</div>}
-    </div>
-    <div style={{padding:12,borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
-      <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&input.trim()){const v=input;setInput("");send(v);}}} placeholder="问我任何事…" style={{flex:1,fontSize:13,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6}}/>
-      <button onClick={()=>{const v=input;setInput("");send(v);}} style={{fontSize:13,padding:"7px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,cursor:"pointer"}}>发送</button>
-    </div>
-  </div>;
+  return React.createElement("div",{style:{position:"fixed",right:0,top:0,height:"100%",width:"min(580px,100vw)",background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 24px rgba(0,0,0,.1)"}},
+    React.createElement("div",{style:{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}},
+      React.createElement("span",{style:{fontSize:14,fontWeight:500}},
+        "✨ AI助手 ",React.createElement("span",{style:{fontSize:11,color:"#aaa"}},"Gemini")
+      ),
+      React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center"}},
+        React.createElement("button",{onClick:openNewWin,style:{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}},"⬡ 新窗口"),
+        React.createElement("button",{onClick:()=>setShowKey(v=>!v),style:{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}},apiKey?"🔑 已设置":"🔑 设置Key"),
+        React.createElement("button",{onClick:onClose,style:{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"4px 9px",cursor:"pointer"}},"✕")
+      )
+    ),
+    showKey&&React.createElement("div",{style:{padding:12,background:"#fffbe6",borderBottom:"0.5px solid #e8e0c0",flexShrink:0}},
+      React.createElement("div",{style:{fontSize:12,color:"#666",marginBottom:6}},"Gemini API Key："),
+      React.createElement("div",{style:{display:"flex",gap:6}},
+        React.createElement("input",{defaultValue:apiKey,placeholder:"AIza...",id:"gkey",type:"password",style:{flex:1,fontSize:12,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:5}}),
+        React.createElement("button",{onClick:()=>saveKey(document.getElementById("gkey").value.trim()),style:{fontSize:12,padding:"6px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}},"保存")
+      ),
+      React.createElement("div",{style:{fontSize:11,color:"#999",marginTop:6,lineHeight:1.7}},
+        "免费Key：",React.createElement("a",{href:"https://aistudio.google.com/app/apikey",target:"_blank",style:{color:"#185FA5"}},"aistudio.google.com"),
+        " → 选 Gemini 2.5 Flash",React.createElement("br"),
+        "自动尝试：2.5-flash → 2.0-flash → 1.5-flash"
+      )
+    ),
+    React.createElement("div",{ref:msgRef,style:{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}},
+      msgs.map((m,i)=>React.createElement("div",{key:i},
+        m.images&&m.images.length>0&&React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6,justifyContent:m.role==="user"?"flex-end":"flex-start"}},
+          m.images.map((src,j)=>React.createElement("img",{key:j,src:src,style:{maxWidth:200,maxHeight:140,borderRadius:6,objectFit:"cover"}}))
+        ),
+        m.text&&React.createElement("div",{style:{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#666",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}},m.text)
+      )),
+      loading&&React.createElement("div",{style:{fontSize:13,color:"#aaa",fontStyle:"italic"},className:"pulse"},"思考中…")
+    ),
+    pendingImgs.length>0&&React.createElement("div",{style:{padding:"6px 12px",borderTop:"0.5px solid #f0ede8",display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}},
+      pendingImgs.map((img,i)=>React.createElement("div",{key:i,style:{position:"relative"}},
+        React.createElement("img",{src:img.preview,style:{width:56,height:56,borderRadius:6,objectFit:"cover"}}),
+        React.createElement("button",{onClick:()=>setPendingImgs(imgs=>imgs.filter((_,j)=>j!==i)),style:{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:10,lineHeight:"16px",padding:0}},"✕")
+      ))
+    ),
+    React.createElement("div",{style:{padding:"10px 12px",borderTop:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",gap:8,flexShrink:0}},
+      React.createElement("textarea",{value:input,onChange:e=>setInput(e.target.value),
+        onKeyDown:e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();if(input.trim()||pendingImgs.length)doSend(input);}},
+        placeholder:"输入消息… (Enter发送，Shift+Enter换行)",rows:2,
+        style:{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,resize:"none",lineHeight:1.5,fontFamily:"inherit"}}),
+      React.createElement("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+        React.createElement("button",{onClick:()=>fileRef.current.click(),style:{padding:"6px 12px",border:"0.5px solid #ccc",background:"#f7f6f3",borderRadius:6,fontSize:12,cursor:"pointer",color:"#666"}},"📎 图片"),
+        React.createElement("input",{ref:fileRef,type:"file",accept:"image/*",multiple:true,style:{display:"none"},onChange:handleFile}),
+        React.createElement("span",{style:{flex:1,fontSize:11,color:"#bbb"}},"支持截图、图片分析"),
+        React.createElement("button",{onClick:()=>doSend(input),disabled:loading||(!input.trim()&&!pendingImgs.length),style:{padding:"7px 20px",background:loading?"#ccc":"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:loading?"default":"pointer",fontWeight:500}},"发送")
+      )
+    )
+  );
 }
 
-/* ═══════════════════════════════════════════
-   SETTINGS PANEL
-═══════════════════════════════════════════ */
 function SettingsPanel({onClose,onSynced}){
   const [token,setToken]=useState(()=>lsGet("zj_gh_token",""));
   const [gistId,setGistId]=useState(()=>lsGet("zj_gist_id",""));
@@ -852,7 +979,7 @@ function NoteCard({note,onAISummarize,geminiKey,onDelete}){
     if(!geminiKey||!note.content)return;
     setLoading(true);
     try{
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,{
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:`你是一个学习助手。从以下笔记中提炼：1）3个核心要点（每点一句话，用"•"开头）2）1个立即可执行的行动项（用"→"开头）。只返回这4行，不要其他内容。\n\n笔记：${note.content}`}]}]}),
       });
@@ -1284,6 +1411,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 }
 
 function App(){
+  const [sidebarOpen,setSidebarOpen]=useState(false);
   const [tasks,setTasks]=useState(SAMPLE_TASKS);
   const [journal,setJournal]=useState({});
   const [futureLog,setFutureLog]=useState({});
@@ -1403,15 +1531,20 @@ function App(){
   const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"}];
 
   return<div style={{display:"flex",height:"100vh",background:"#f7f6f3",fontSize:14,overflow:"hidden"}}>
+    {/* mobile menu btn */}
+    {!sidebarOpen&&<button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{position:"fixed",top:12,left:12,zIndex:200,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"7px 10px",fontSize:18,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>☰</button>}
+    {/* sidebar overlay for mobile */}
+    {sidebarOpen&&<div className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.3)",zIndex:49}}/>}
     {/* sidebar */}
-    <div style={{width:190,background:"#fff",borderRight:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
+    <div className={`sidebar-desktop ${sidebarOpen?"sidebar-mobile-open":""}`} style={{width:190,background:"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto",position:"relative",zIndex:50}}>
       <div style={{padding:"0 16px 16px",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span>🧠 专注板</span>
-        <button onClick={()=>setShowSettings(true)} title="同步设置" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:ghToken?"#0F6E56":"#bbb"}}>
-          {ghToken?"☁️":"⚙️"}
-        </button>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>setShowSettings(true)} title="同步设置" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:ghToken?"#0F6E56":"#bbb"}}>{ghToken?"☁️":"⚙️"}</button>
+          <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#aaa"}}>✕</button>
+        </div>
       </div>
-      {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id&&!projView?"#1a1a1a":"#666",fontWeight:view===n.id&&!projView?500:400,background:view===n.id&&!projView?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
+      {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id&&!projView?"#1a1a1a":"#666",fontWeight:view===n.id&&!projView?500:400,background:view===n.id&&!projView?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
       <div style={{fontSize:11,color:"#bbb",padding:"14px 16px 4px",textTransform:"uppercase",letterSpacing:".06em"}}>项目</div>
       {PROJECTS.map(p=><div key={p.id} onClick={()=>{setView("projects");setProjView(p);}} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 16px",fontSize:13,color:projView?.id===p.id?"#1a1a1a":"#666",background:projView?.id===p.id?"#f0ede8":"transparent",cursor:"pointer"}}>
         <span style={{width:8,height:8,borderRadius:"50%",background:p.color,flexShrink:0}}/>{p.name}
@@ -1426,7 +1559,7 @@ function App(){
     </div>
 
     {/* main */}
-    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",transition:"margin-right .2s",marginRight:aiOpen?300:0}}>
+    <div className="main-area" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",transition:"margin-right .2s",marginRight:aiOpen?580:0}}>
       <div style={{background:"#fff",borderBottom:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:16,fontWeight:500}}>{projView?projView.name:navTop.find(n=>n.id===view)?.l||""}</span>
