@@ -628,18 +628,20 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
 /* ═══════════════════════════════════════════
    AI PANEL (Gemini)
 ═══════════════════════════════════════════ */
-function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
-  const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 帮你理清思路\n• 分析截图或图片\n\n有什么需要帮忙的？",images:[]}]);
+function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask}){
+  const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 分析图片内容\n• 直接生成任务加入专注板\n\n有什么需要帮忙的？",images:[]}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const [showKey,setShowKey]=useState(false);
   const [pendingImgs,setPendingImgs]=useState([]);
+  const [extracting,setExtracting]=useState(null); // msgIndex being extracted
+  const [taskPreview,setTaskPreview]=useState(null); // {msgIndex, tasks:[{title,project,priority,due}], selected:[bool]}
   const msgRef=useRef(null);
   const fileRef=useRef(null);
 
   useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
   useEffect(()=>{
-    if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆成3-5个具体小步骤："+task.title,task.id,[]);
+    if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆解成具体可执行的步骤："+task.title,task.id,[]);
   });
 
   function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
@@ -679,7 +681,7 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
       'function renderImgs(){var c=document.getElementById("imgprev");if(c)c.remove();if(!imgs.length)return;var d=document.createElement("div");d.id="imgprev";d.style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0";imgs.forEach(function(img,i){var wrap=document.createElement("div");wrap.style="position:relative";var im=document.createElement("img");im.src=img.preview;im.style="width:52px;height:52px;border-radius:6px;object-fit:cover";var btn=document.createElement("button");btn.style="position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#A32D2D;color:#fff;border:none;cursor:pointer;font-size:10px;line-height:16px;padding:0";btn.textContent="x";btn.onclick=function(){imgs.splice(i,1);renderImgs();};wrap.appendChild(im);wrap.appendChild(btn);d.appendChild(wrap);});document.getElementById("bar").insertBefore(d,document.getElementById("bar").firstChild);}',
       'var MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];',
       'async function callAI(parts){for(var i=0;i<MODELS.length;i++){try{var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+MODELS[i]+":generateContent?key="+KEY,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:parts}]})});var d=await r.json();if(d.error&&(d.error.code===404||d.error.status==="NOT_FOUND"))continue;if(d.error)throw new Error(d.error.message);return d.candidates[0].content.parts[0].text||"";}catch(e){if(e.message&&e.message.includes("NOT_FOUND"))continue;throw e;}}throw new Error("所有模型不可用");}',
-      'async function go(){var t=inp.value.trim();if(!t&&!imgs.length)return;inp.value="";var parts=[{text:"你是一个专业的效率助手和学习规划师。回答清晰、结构化、有深度。需要时用标题和列表组织内容。用户："+t}];imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});imgs=[];renderImgs();el.innerHTML+="<div class=\"um\">"+t+(imgs.length?"[附图]":"")+"</div>";el.innerHTML+='<div class="am pulse" id="ty">思考中…</div>';el.scrollTop=9999;try{var rep=await callAI(parts);var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.textContent=rep;}}catch(e){var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.style.color="#A32D2D";ty.textContent="错误："+e.message;}}el.scrollTop=9999;}',
+      'async function go(){var t=inp.value.trim();if(!t&&!imgs.length)return;inp.value="";var parts=[{text:"你是一个内置助手。直接回答，不需要开场白。用户："+t}];imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});imgs=[];renderImgs();el.innerHTML+="<div class=\"um\">"+t+(imgs.length?"[附图]":"")+"</div>";el.innerHTML+='<div class="am pulse" id="ty">思考中…</div>';el.scrollTop=9999;try{var rep=await callAI(parts);var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.textContent=rep;}}catch(e){var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.style.color="#A32D2D";ty.textContent="错误："+e.message;}}el.scrollTop=9999;}',
       '<\/script></body></html>'
     ].join(""));
     w.document.close();
@@ -720,6 +722,53 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
     throw new Error("所有模型不可用，请检查Key权限或访问 aistudio.google.com 重新获取");
   }
 
+  function hasTaskContent(text){
+    if(!text)return false;
+    const lines=text.split("\n");
+    const taskLines=lines.filter(l=>
+      /^[\s]*[•\-\*\d]+[.)\s]/.test(l.trim())||
+      /Day\s*\d+/i.test(l)||
+      /第[\d一二三四五六七八九十]+[天周步]/.test(l)||
+      /^#{1,3}\s/.test(l)
+    );
+    return taskLines.length>=2;
+  }
+
+  async function extractTasks(msgIndex,text){
+    if(!apiKey)return;
+    setExtracting(msgIndex);
+    const prompt=`从以下内容中提取所有具体的任务或学习计划条目，返回JSON数组。
+每个条目格式：{"title":"任务标题","priority":"today|normal|urgent","due":""}
+title要具体，包含关键信息（如章节名、页码）。最多提取15个。
+只返回JSON数组，不要其他内容。
+
+内容：
+${text}`;
+    try{
+      const reply=await callGemini(apiKey,[{parts:[{text:prompt}]}]);
+      const clean=reply.replace(/\`\`\`json|\`\`\`/g,"").trim();
+      const parsed=JSON.parse(clean);
+      if(Array.isArray(parsed)&&parsed.length>0){
+        setTaskPreview({
+          msgIndex,
+          tasks:parsed.map(t=>({title:t.title||"",priority:t.priority||"normal",due:t.due||"",project:2})),
+          selected:parsed.map(()=>true)
+        });
+      }
+    }catch(e){
+      console.error("Extract failed:",e);
+    }
+    setExtracting(null);
+  }
+
+  function confirmAddTasks(){
+    if(!taskPreview)return;
+    const toAdd=taskPreview.tasks.filter((_,i)=>taskPreview.selected[i]);
+    toAdd.forEach(t=>onAddTask(t));
+    setTaskPreview(null);
+    setMsgs(m=>[...m,{role:"ai",text:`✓ 已将 ${toAdd.length} 个任务加入专注板`,images:[]}]);
+  }
+
   async function doSend(text,btid,imgOverride){
     const imgs=imgOverride!==undefined?imgOverride:pendingImgs;
     if(!text?.trim()&&!imgs.length||loading)return;
@@ -729,7 +778,7 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
     setMsgs(m=>[...m,{role:"user",text:msg,images:imgs.map(p=>p.preview)}]);
     setLoading(true);
     const ctx=tasks.filter(t=>!t.done).map(t=>`- ${t.title}（${getProj(t.project).name}，${t.priority}）`).join("\n");
-    const sys=`你是一个专业的效率助手和学习规划师。回答清晰、结构化、有深度。需要时用标题和列表组织内容。拆解任务时步骤具体可执行。用户当前任务背景：\n${ctx}`;
+    const sys=`你是这个专注板应用的内置助手。用户的当前任务列表：\n${ctx}\n\n直接回答，不需要开场白。`;
     const parts=[{text:sys+"\n\n用户："+msg}];
     imgs.forEach(p=>parts.push({inline_data:{mime_type:p.type,data:p.data}}));
     try{
@@ -780,8 +829,51 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
               </div>
             )}
             {m.text&&(
-              <div style={{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#555",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>
-                {m.text}
+              <div style={{background:m.role==="ai"?"#f7f6f3":"transparent",borderRadius:8,overflow:"hidden"}}>
+                <div style={{fontSize:13,lineHeight:1.65,padding:m.role==="ai"?"10px 12px":"0",color:m.role==="ai"?"#1a1a1a":"#555",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>
+                  {m.text}
+                </div>
+                {m.role==="ai"&&hasTaskContent(m.text)&&taskPreview?.msgIndex!==i&&(
+                  <div style={{padding:"6px 12px 10px",borderTop:"0.5px solid #e8e5e0"}}>
+                    <button
+                      onClick={()=>extractTasks(i,m.text)}
+                      disabled={extracting===i}
+                      style={{fontSize:12,color:"#185FA5",background:"#EBF3FB",border:"0.5px solid #B5D4F4",borderRadius:6,padding:"5px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}
+                    >
+                      {extracting===i?"⏳ 提取中…":"📋 提取为任务，加入专注板"}
+                    </button>
+                  </div>
+                )}
+                {m.role==="ai"&&taskPreview?.msgIndex===i&&(
+                  <div style={{padding:"10px 12px",borderTop:"0.5px solid #e8e5e0"}}>
+                    <div style={{fontSize:12,fontWeight:500,color:"#1a1a1a",marginBottom:8}}>选择要加入的任务：</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:240,overflowY:"auto",marginBottom:10}}>
+                      {taskPreview.tasks.map((t,ti)=>(
+                        <label key={ti} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 6px",borderRadius:5,background:taskPreview.selected[ti]?"#f0f7ff":"#fafafa",cursor:"pointer"}}>
+                          <input type="checkbox" checked={taskPreview.selected[ti]} onChange={()=>setTaskPreview(p=>({...p,selected:p.selected.map((s,j)=>j===ti?!s:s)}))} style={{marginTop:2,flexShrink:0}}/>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:12,color:"#1a1a1a",lineHeight:1.4}}>{t.title}</div>
+                            <div style={{fontSize:11,color:"#aaa",marginTop:1}}>
+                              {PROJECTS.find(p=>p.id===t.project)?.name}
+                              {t.due&&<span style={{marginLeft:6}}>📅{t.due}</span>}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontSize:11,color:"#aaa",flex:1}}>{taskPreview.selected.filter(Boolean).length}/{taskPreview.tasks.length} 已选</span>
+                      <button onClick={()=>setTaskPreview(null)} style={{fontSize:12,color:"#888",background:"none",border:"none",cursor:"pointer"}}>取消</button>
+                      <button
+                        onClick={confirmAddTasks}
+                        disabled={!taskPreview.selected.some(Boolean)}
+                        style={{fontSize:12,fontWeight:500,color:"#fff",background:"#1a1a1a",border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer"}}
+                      >
+                        加入专注板 ({taskPreview.selected.filter(Boolean).length})
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1695,7 +1787,7 @@ function App(){
       </div>
     </div>
 
-    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey}/>
+    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask}/>
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
