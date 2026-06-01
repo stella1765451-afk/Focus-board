@@ -648,45 +648,104 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
 
   function openNewWin(){
     const k=apiKey;
-    const w=window.open("","aiwin","width=640,height=700,resizable=yes,scrollbars=yes");
-    if(!w)return;
-    w.document.open();
-    w.document.write([
-      '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>AI助手</title>',
-      '<style>*{box-sizing:border-box;margin:0;padding:0}',
-      'body{font-family:-apple-system,sans-serif;background:#f7f6f3;display:flex;height:100vh;flex-direction:column}',
-      '#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
-      '.am{font-size:13px;line-height:1.65;background:#fff;padding:10px 12px;border-radius:8px;white-space:pre-wrap;color:#1a1a1a}',
-      '.um{font-size:13px;color:#666;font-style:italic;text-align:right;padding:4px 0;line-height:1.65}',
-      '#bar{padding:10px 12px;border-top:1px solid #e0ddd6;background:#fff;display:flex;gap:8px;flex-direction:column}',
-      '#row{display:flex;gap:8px}',
-      '#inp{flex:1;padding:8px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit;resize:none}',
-      'button{padding:8px 14px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}',
-      '.pulse{animation:p 1.5s infinite}@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}',
-      '</style></head><body>',
-      '<div id="msgs"><div class="am">✨ 独立AI窗口 — 支持图片上传和分析</div></div>',
-      '<div id="bar">',
-      '<textarea id="inp" rows="2" placeholder="输入消息，Enter发送，Shift+Enter换行…"></textarea>',
-      '<div id="row"><label style="cursor:pointer;padding:7px 12px;border:0.5px solid #ccc;background:#f7f6f3;border-radius:6px;font-size:12px;color:#666">📎 图片<input type="file" accept="image/*" multiple style="display:none" onchange="addImg(this)"></label>',
-      '<span style="flex:1;font-size:11px;color:#bbb;align-self:center"></span>',
-      '<button onclick="go()">发送</button></div>',
-      '</div>',
-      '<script>',
-      'var KEY="'+k+'";',
-      'var imgs=[];',
-      'var el=document.getElementById("msgs");',
-      'var inp=document.getElementById("inp");',
-      'inp.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();go();}});',
-      'function addImg(input){Array.from(input.files).forEach(function(f){var r=new FileReader();r.onload=function(e){var d=e.target.result;imgs.push({preview:d,data:d.split(",")[1],type:f.type});renderImgs();};r.readAsDataURL(f);});}',
-      'function renderImgs(){var c=document.getElementById("imgprev");if(c)c.remove();if(!imgs.length)return;var d=document.createElement("div");d.id="imgprev";d.style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0";imgs.forEach(function(img,i){var wrap=document.createElement("div");wrap.style="position:relative";var im=document.createElement("img");im.src=img.preview;im.style="width:52px;height:52px;border-radius:6px;object-fit:cover";var btn=document.createElement("button");btn.style="position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#A32D2D;color:#fff;border:none;cursor:pointer;font-size:10px;line-height:16px;padding:0";btn.textContent="x";btn.onclick=function(){imgs.splice(i,1);renderImgs();};wrap.appendChild(im);wrap.appendChild(btn);d.appendChild(wrap);});document.getElementById("bar").insertBefore(d,document.getElementById("bar").firstChild);}',
-      'var MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];',
-      'async function callAI(parts){for(var i=0;i<MODELS.length;i++){try{var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+MODELS[i]+":generateContent?key="+KEY,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:parts}]})});var d=await r.json();if(d.error&&(d.error.code===404||d.error.status==="NOT_FOUND"))continue;if(d.error)throw new Error(d.error.message);return d.candidates[0].content.parts[0].text||"";}catch(e){if(e.message&&e.message.includes("NOT_FOUND"))continue;throw e;}}throw new Error("所有模型不可用");}',
-      'async function go(){var t=inp.value.trim();if(!t&&!imgs.length)return;inp.value="";var parts=[{text:"你是一个内置助手。直接回答，不需要开场白。用户："+t}];imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});imgs=[];renderImgs();el.innerHTML+="<div class=\"um\">"+t+(imgs.length?"[附图]":"")+"</div>";el.innerHTML+='<div class="am pulse" id="ty">思考中…</div>';el.scrollTop=9999;try{var rep=await callAI(parts);var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.textContent=rep;}}catch(e){var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.style.color="#A32D2D";ty.textContent="错误："+e.message;}}el.scrollTop=9999;}',
-      '<\/script></body></html>'
-    ].join(""));
-    w.document.close();
+    const htmlContent=[
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>AI\u52a9\u624b</title>",
+      "<style>",
+      "*{box-sizing:border-box;margin:0;padding:0}",
+      "body{font-family:-apple-system,sans-serif;background:#f7f6f3;display:flex;height:100vh;flex-direction:column}",
+      "#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}",
+      ".am{font-size:13px;line-height:1.65;background:#fff;padding:10px 12px;border-radius:8px;white-space:pre-wrap;color:#1a1a1a}",
+      ".um{font-size:13px;color:#555;font-style:italic;text-align:right;padding:4px 0}",
+      "#bar{padding:10px 12px;border-top:1px solid #e0ddd6;background:#fff;display:flex;gap:8px;flex-direction:column}",
+      "#inp{width:100%;padding:8px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit;resize:none}",
+      "button{padding:8px 14px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}",
+      ".row{display:flex;gap:8px;align-items:center}",
+      ".pulse{animation:p 1.5s infinite}@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}",
+      "</style></head><body>",
+      "<div id='msgs'><div class='am'>\u2728 \u72ec\u7acbAI\u7a97\u53e3 \u2014 \u652f\u6301\u56fe\u7247\u4e0a\u4f20\u548c\u5206\u6790</div></div>",
+      "<div id='bar'>",
+      "<textarea id='inp' rows='2' placeholder='\u8f93\u5165\u6d88\u606f\uff0cEnter\u53d1\u9001\uff0cShift+Enter\u6362\u884c\u2026'></textarea>",
+      "<div class='row'>",
+      "<label style='cursor:pointer;padding:6px 12px;border:0.5px solid #ccc;background:#f7f6f3;border-radius:6px;font-size:12px;color:#666'>",
+      "\ud83d\udcce \u56fe\u7247<input type='file' accept='image/*' multiple style='display:none' onchange='addImg(this)'>",
+      "</label>",
+      "<span style='flex:1'></span>",
+      "<button onclick='go()'>\u53d1\u9001</button>",
+      "</div></div>",
+      "<script>",
+      "var KEY='"+k+"';",
+      "var imgs=[];",
+      "var el=document.getElementById('msgs');",
+      "var inp=document.getElementById('inp');",
+      "inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go();}});",
+      "function addImg(input){",
+      "  Array.from(input.files).forEach(function(f){",
+      "    var r=new FileReader();",
+      "    r.onload=function(ev){",
+      "      var d=ev.target.result;",
+      "      imgs.push({preview:d,data:d.split(',')[1],type:f.type});",
+      "      renderImgs();",
+      "    };",
+      "    r.readAsDataURL(f);",
+      "  });",
+      "}",
+      "function renderImgs(){",
+      "  var old=document.getElementById('imgprev');",
+      "  if(old)old.remove();",
+      "  if(!imgs.length)return;",
+      "  var wrap=document.createElement('div');",
+      "  wrap.id='imgprev';wrap.style='display:flex;gap:6px;flex-wrap:wrap;padding:4px 0';",
+      "  imgs.forEach(function(img,i){",
+      "    var box=document.createElement('div');box.style='position:relative';",
+      "    var im=document.createElement('img');im.src=img.preview;im.style='width:52px;height:52px;border-radius:6px;object-fit:cover';",
+      "    var btn=document.createElement('button');btn.textContent='x';btn.style='position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#A32D2D;color:#fff;border:none;cursor:pointer;font-size:10px;padding:0;line-height:16px';",
+      "    btn.onclick=function(){imgs.splice(i,1);renderImgs();};",
+      "    box.appendChild(im);box.appendChild(btn);wrap.appendChild(box);",
+      "  });",
+      "  document.getElementById('bar').insertBefore(wrap,document.getElementById('bar').firstChild);",
+      "}",
+      "var MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];",
+      "async function callAI(parts){",
+      "  for(var i=0;i<MODELS.length;i++){",
+      "    try{",
+      "      var r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODELS[i]+':generateContent?key='+KEY,{",
+      "        method:'POST',headers:{'Content-Type':'application/json'},",
+      "        body:JSON.stringify({contents:[{parts:parts}]})",
+      "      });",
+      "      var d=await r.json();",
+      "      if(d.error&&(d.error.code===404||d.error.status==='NOT_FOUND'))continue;",
+      "      if(d.error)throw new Error(d.error.message);",
+      "      return d.candidates[0].content.parts[0].text||'';",
+      "    }catch(e){if(e.message&&e.message.includes('NOT_FOUND'))continue;throw e;}",
+      "  }",
+      "  throw new Error('\u6240\u6709\u6a21\u578b\u4e0d\u53ef\u7528');",
+      "}",
+      "async function go(){",
+      "  var t=inp.value.trim();",
+      "  if(!t&&!imgs.length)return;",
+      "  inp.value='';",
+      "  var parts=[{text:'\u4f60\u662f\u5185\u7f6e\u52a9\u624b\u3002\u76f4\u63a5\u56de\u7b54\u3002\u7528\u6237\uff1a'+t}];",
+      "  imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});",
+      "  imgs=[];renderImgs();",
+      "  el.innerHTML+='<div class=\"um\">'+t+'</div>';",
+      "  el.innerHTML+='<div class=\"am pulse\" id=\"ty\">\u601d\u8003\u4e2d\u2026</div>';",
+      "  el.scrollTop=9999;",
+      "  try{",
+      "    var rep=await callAI(parts);",
+      "    var ty=document.getElementById('ty');",
+      "    if(ty){ty.id='';ty.className='am';ty.textContent=rep;}",
+      "  }catch(e){",
+      "    var ty=document.getElementById('ty');",
+      "    if(ty){ty.id='';ty.style.color='#A32D2D';ty.textContent='\u9519\u8bef\uff1a'+e.message;}",
+      "  }",
+      "  el.scrollTop=9999;",
+      "}",
+      "<\/script></body></html>"
+    ].join("");
+    var blob=new Blob([htmlContent],{type:"text/html"});
+    var url=URL.createObjectURL(blob);
+    window.open(url,"aiwin","width=640,height=700,resizable=yes,scrollbars=yes");
   }
-
   function handleFile(e){
     Array.from(e.target.files).forEach(file=>{
       if(!file.type.startsWith("image/"))return;
@@ -704,7 +763,7 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
     const models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];
     for(const model of models){
       try{
-        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{
+        const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent?key="+key,{
           method:"POST",headers:{"Content-Type":"application/json"},
           body:JSON.stringify({contents}),
         });
@@ -737,16 +796,14 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
   async function extractTasks(msgIndex,text){
     if(!apiKey)return;
     setExtracting(msgIndex);
-    const prompt=`从以下内容中提取所有具体的任务或学习计划条目，返回JSON数组。
-每个条目格式：{"title":"任务标题","priority":"today|normal|urgent","due":""}
-title要具体，包含关键信息（如章节名、页码）。最多提取15个。
-只返回JSON数组，不要其他内容。
-
-内容：
-${text}`;
+    const prompt="从以下内容中提取所有具体的任务或学习计划条目，返回JSON数组。\n"
+      +"每个条目格式：{\"title\":\"任务标题\",\"priority\":\"today|normal|urgent\",\"due\":\"\"}\n"
+      +"title要具体，包含关键信息（如章节名、页码）。最多提取15个。\n"
+      +"只返回JSON数组，不要其他内容。\n\n"
+      +"内容：\n"+text;
     try{
       const reply=await callGemini(apiKey,[{parts:[{text:prompt}]}]);
-      const clean=reply.replace(/\`\`\`json|\`\`\`/g,"").trim();
+      const clean=reply.replace(/\u0060\u0060\u0060json|\u0060\u0060\u0060/g,"").trim();
       const parsed=JSON.parse(clean);
       if(Array.isArray(parsed)&&parsed.length>0){
         setTaskPreview({
@@ -766,7 +823,7 @@ ${text}`;
     const toAdd=taskPreview.tasks.filter((_,i)=>taskPreview.selected[i]);
     toAdd.forEach(t=>onAddTask(t));
     setTaskPreview(null);
-    setMsgs(m=>[...m,{role:"ai",text:`✓ 已将 ${toAdd.length} 个任务加入专注板`,images:[]}]);
+    setMsgs(m=>[...m,{role:"ai",text:"✓ 已将 "+toAdd.length+" 个任务加入专注板",images:[]}]);
   }
 
   async function doSend(text,btid,imgOverride){
@@ -777,8 +834,8 @@ ${text}`;
     setInput("");setPendingImgs([]);
     setMsgs(m=>[...m,{role:"user",text:msg,images:imgs.map(p=>p.preview)}]);
     setLoading(true);
-    const ctx=tasks.filter(t=>!t.done).map(t=>`- ${t.title}（${getProj(t.project).name}，${t.priority}）`).join("\n");
-    const sys=`你是这个专注板应用的内置助手。用户的当前任务列表：\n${ctx}\n\n直接回答，不需要开场白。`;
+    const ctx=tasks.filter(t=>!t.done).map(t=>"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）").join("\n");
+    const sys="你是这个专注板应用的内置助手。用户的当前任务列表：\n"+ctx+"\n\n直接回答，不需要开场白。";
     const parts=[{text:sys+"\n\n用户："+msg}];
     imgs.forEach(p=>parts.push({inline_data:{mime_type:p.type,data:p.data}}));
     try{
@@ -789,7 +846,7 @@ ${text}`;
         if(steps.length)onSubtasksAdded(btid,steps);
       }
     }catch(e){
-      setMsgs(m=>[...m,{role:"ai",text:`错误：${e.message}`,images:[]}]);
+      setMsgs(m=>[...m,{role:"ai",text:"错误："+e.message,images:[]}]);
     }
     setLoading(false);
   }
