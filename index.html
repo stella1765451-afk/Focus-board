@@ -142,11 +142,16 @@ function MigrateTag({count}){
   const color=count>=3?"#A32D2D":count>=2?"#854F0B":"#aaa";
   return<span title={`已迁移${count}次`} style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:count>=3?"#FCEBEB":count>=2?"#FAEEDA":"#f0ede8",color,whiteSpace:"nowrap"}}>迁移×{count}</span>;
 }
-function SyncBadge({status}){
-  const S={idle:{c:"#bbb",l:""},saving:{c:"#854F0B",l:"保存中…"},saved:{c:"#0F6E56",l:"✓ 已同步"},error:{c:"#A32D2D",l:"⚠ 同步失败"}};
+function SyncBadge({status,hasToken}){
+  const S={
+    idle:{c:"#bbb",l:hasToken?"":"未连接云同步"},
+    saving:{c:"#854F0B",l:"同步中…"},
+    saved:{c:"#0F6E56",l:"✓ 已同步"},
+    error:{c:"#A32D2D",l:"⚠ 同步失败，点🔄重试"}
+  };
   const s=S[status]||S.idle;
   if(!s.l)return null;
-  return<span style={{fontSize:11,color:s.c,marginLeft:8}}>{s.l}</span>;
+  return<span style={{fontSize:11,color:s.c}}>{s.l}</span>;
 }
 
 /* ═══════════════════════════════════════════
@@ -631,170 +636,191 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey}){
   const [pendingImgs,setPendingImgs]=useState([]);
   const msgRef=useRef(null);
   const fileRef=useRef(null);
+
   useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
-  useEffect(()=>{if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆成3-5个具体小步骤："+task.title,task.id,[]);});
+  useEffect(()=>{
+    if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆成3-5个具体小步骤："+task.title,task.id,[]);
+  });
+
   function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
 
   function openNewWin(){
     const k=apiKey;
-    const w=window.open("","aiwin","width=620,height=700,resizable=yes");
+    const w=window.open("","aiwin","width=640,height=700,resizable=yes,scrollbars=yes");
     if(!w)return;
-    const doc=w.document;
-    doc.open();
-    doc.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>AI助手</title>'
-      +'<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,sans-serif;background:#f7f6f3;display:flex;height:100vh;flex-direction:column}'
-      +'#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}'
-      +'.am{font-size:13px;line-height:1.65;background:#fff;padding:10px 12px;border-radius:8px;white-space:pre-wrap}'
-      +'.um{font-size:13px;color:#666;font-style:italic;text-align:right;padding:4px 0;line-height:1.65}'
-      +'#bar{padding:10px;border-top:1px solid #e0ddd6;background:#fff;display:flex;gap:8px}'
-      +'#inp{flex:1;padding:8px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit}'
-      +'button{padding:8px 14px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}'
-      +'</style></head><body>'
-      +'<div id="msgs"><div class="am">✨ 独立AI窗口 — 在这里可以自由对话</div></div>'
-      +'<div id="bar"><input id="inp" placeholder="输入消息，Enter发送…"/><button onclick="go()">发送</button></div>'
-      +'<script>'
-      +'var key="'+k+'";'
-      +'var el=document.getElementById("msgs");'
-      +'var inp=document.getElementById("inp");'
-      +'inp.addEventListener("keydown",function(e){if(e.key==="Enter")go();});'
-      +'async function go(){'
-      +'  var t=inp.value.trim();if(!t)return;inp.value="";'
-      +'  el.innerHTML+="<div class=\\"um\\">"+t+"</div>";'
-      +'  el.innerHTML+="<div class=\\"am\\" id=\\"ty\\">思考中…</div>";'
-      +'  el.scrollTop=9999;'
-      +'  var models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];'
-      +'  var reply="出错了";'
-      +'  for(var i=0;i<models.length;i++){'
-      +'    try{'
-      +'      var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+models[i]+":generateContent?key="+key,{'
-      +'        method:"POST",headers:{"Content-Type":"application/json"},'
-      +'        body:JSON.stringify({contents:[{parts:[{text:"你是ADHD效率助手，简短有力，多用emoji。用户："+t}]}]})'
-      +'      });'
-      +'      var d=await r.json();'
-      +'      if(d.error&&(d.error.code===404||d.error.status==="NOT_FOUND"))continue;'
-      +'      reply=d.candidates&&d.candidates[0]&&d.candidates[0].content&&d.candidates[0].content.parts&&d.candidates[0].content.parts[0]&&d.candidates[0].content.parts[0].text||"无回复";'
-      +'      break;'
-      +'    }catch(e){continue;}'
-      +'  }'
-      +'  var ty=document.getElementById("ty");'
-      +'  if(ty){ty.id="";ty.textContent=reply;}'
-      +'  el.scrollTop=9999;'
-      +'}'
-      +'<\/script></body></html>');
-    doc.close();
+    w.document.open();
+    w.document.write([
+      '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>AI助手</title>',
+      '<style>*{box-sizing:border-box;margin:0;padding:0}',
+      'body{font-family:-apple-system,sans-serif;background:#f7f6f3;display:flex;height:100vh;flex-direction:column}',
+      '#msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}',
+      '.am{font-size:13px;line-height:1.65;background:#fff;padding:10px 12px;border-radius:8px;white-space:pre-wrap;color:#1a1a1a}',
+      '.um{font-size:13px;color:#666;font-style:italic;text-align:right;padding:4px 0;line-height:1.65}',
+      '#bar{padding:10px 12px;border-top:1px solid #e0ddd6;background:#fff;display:flex;gap:8px;flex-direction:column}',
+      '#row{display:flex;gap:8px}',
+      '#inp{flex:1;padding:8px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;font-family:inherit;resize:none}',
+      'button{padding:8px 14px;background:#1a1a1a;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer}',
+      '.pulse{animation:p 1.5s infinite}@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}',
+      '</style></head><body>',
+      '<div id="msgs"><div class="am">✨ 独立AI窗口 — 支持图片上传和分析</div></div>',
+      '<div id="bar">',
+      '<textarea id="inp" rows="2" placeholder="输入消息，Enter发送，Shift+Enter换行…"></textarea>',
+      '<div id="row"><label style="cursor:pointer;padding:7px 12px;border:0.5px solid #ccc;background:#f7f6f3;border-radius:6px;font-size:12px;color:#666">📎 图片<input type="file" accept="image/*" multiple style="display:none" onchange="addImg(this)"></label>',
+      '<span style="flex:1;font-size:11px;color:#bbb;align-self:center"></span>',
+      '<button onclick="go()">发送</button></div>',
+      '</div>',
+      '<script>',
+      'var KEY="'+k+'";',
+      'var imgs=[];',
+      'var el=document.getElementById("msgs");',
+      'var inp=document.getElementById("inp");',
+      'inp.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();go();}});',
+      'function addImg(input){Array.from(input.files).forEach(function(f){var r=new FileReader();r.onload=function(e){var d=e.target.result;imgs.push({preview:d,data:d.split(",")[1],type:f.type});renderImgs();};r.readAsDataURL(f);});}',
+      'function renderImgs(){var c=document.getElementById("imgprev");if(c)c.remove();if(!imgs.length)return;var d=document.createElement("div");d.id="imgprev";d.style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0";imgs.forEach(function(img,i){var wrap=document.createElement("div");wrap.style="position:relative";var im=document.createElement("img");im.src=img.preview;im.style="width:52px;height:52px;border-radius:6px;object-fit:cover";var btn=document.createElement("button");btn.style="position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#A32D2D;color:#fff;border:none;cursor:pointer;font-size:10px;line-height:16px;padding:0";btn.textContent="x";btn.onclick=function(){imgs.splice(i,1);renderImgs();};wrap.appendChild(im);wrap.appendChild(btn);d.appendChild(wrap);});document.getElementById("bar").insertBefore(d,document.getElementById("bar").firstChild);}',
+      'var MODELS=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];',
+      'async function callAI(parts){for(var i=0;i<MODELS.length;i++){try{var r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+MODELS[i]+":generateContent?key="+KEY,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:parts}]})});var d=await r.json();if(d.error&&(d.error.code===404||d.error.status==="NOT_FOUND"))continue;if(d.error)throw new Error(d.error.message);return d.candidates[0].content.parts[0].text||"";}catch(e){if(e.message&&e.message.includes("NOT_FOUND"))continue;throw e;}}throw new Error("所有模型不可用");}',
+      'async function go(){var t=inp.value.trim();if(!t&&!imgs.length)return;inp.value="";var parts=[{text:"你是一个专业的效率助手和学习规划师。回答清晰、结构化、有深度。需要时用标题和列表组织内容。用户："+t}];imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});imgs=[];renderImgs();el.innerHTML+="<div class=\"um\">"+t+(imgs.length?"[附图]":"")+"</div>";el.innerHTML+='<div class="am pulse" id="ty">思考中…</div>';el.scrollTop=9999;try{var rep=await callAI(parts);var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.textContent=rep;}}catch(e){var ty=document.getElementById("ty");if(ty){ty.id="";ty.className="am";ty.style.color="#A32D2D";ty.textContent="错误："+e.message;}}el.scrollTop=9999;}',
+      '<\/script></body></html>'
+    ].join(""));
+    w.document.close();
   }
 
   function handleFile(e){
-    Array.from(e.target.files).forEach(function(file){
+    Array.from(e.target.files).forEach(file=>{
       if(!file.type.startsWith("image/"))return;
-      var r=new FileReader();
-      r.onload=function(ev){
-        var b64=ev.target.result.split(",")[1];
-        setPendingImgs(function(imgs){return[...imgs,{preview:ev.target.result,data:b64,type:file.type,name:file.name}];});
+      const r=new FileReader();
+      r.onload=ev=>{
+        const b64=ev.target.result.split(",")[1];
+        setPendingImgs(imgs=>[...imgs,{preview:ev.target.result,data:b64,type:file.type,name:file.name}]);
       };
       r.readAsDataURL(file);
     });
+    e.target.value="";
   }
 
-  async function callGemini(key,prompt){
-    var models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];
-    for(var i=0;i<models.length;i++){
+  async function callGemini(key,contents){
+    const models=["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];
+    for(const model of models){
       try{
-        var res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+models[i]+":generateContent?key="+key,{
+        const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{
           method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({contents:prompt}),
+          body:JSON.stringify({contents}),
         });
-        var data=await res.json();
+        const data=await res.json();
         if(data.error){
           if(data.error.code===404||data.error.status==="NOT_FOUND")continue;
           throw new Error(data.error.message);
         }
-        return(data.candidates&&data.candidates[0]&&data.candidates[0].content&&data.candidates[0].content.parts&&data.candidates[0].content.parts[0]&&data.candidates[0].content.parts[0].text)||"";
+        return data.candidates?.[0]?.content?.parts?.[0]?.text||"";
       }catch(e){
-        if(e.message&&(e.message.includes("not found")||e.message.includes("NOT_FOUND")))continue;
+        if(e.message?.includes("NOT_FOUND")||e.message?.includes("not found"))continue;
         throw e;
       }
     }
-    throw new Error("所有模型不可用，请检查Key权限");
+    throw new Error("所有模型不可用，请检查Key权限或访问 aistudio.google.com 重新获取");
   }
 
   async function doSend(text,btid,imgOverride){
-    var imgs=imgOverride!==undefined?imgOverride:pendingImgs;
-    if((!text||!text.trim())&&!imgs.length)return;
-    if(loading)return;
+    const imgs=imgOverride!==undefined?imgOverride:pendingImgs;
+    if(!text?.trim()&&!imgs.length||loading)return;
     if(!apiKey){setShowKey(true);return;}
-    var msg=(text||"").trim();
+    const msg=(text||"").trim();
     setInput("");setPendingImgs([]);
-    setMsgs(function(m){return[...m,{role:"user",text:msg,images:imgs.map(function(p){return p.preview;})}];});
+    setMsgs(m=>[...m,{role:"user",text:msg,images:imgs.map(p=>p.preview)}]);
     setLoading(true);
-    var ctx=tasks.filter(function(t){return!t.done;}).map(function(t){return"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）";}).join("\n");
-    var sys="你是一个ADHD专属效率助手。风格：简短有力，具体可执行，多用emoji鼓励，不说教。用户当前待办：\n"+ctx+"\n\n拆解任务时每步用'•'开头，控制在3-5步，每步要荒谬地简单。";
-    var parts=[{text:sys+"\n\n用户："+msg}];
-    imgs.forEach(function(p){parts.push({inline_data:{mime_type:p.type,data:p.data}});});
+    const ctx=tasks.filter(t=>!t.done).map(t=>`- ${t.title}（${getProj(t.project).name}，${t.priority}）`).join("\n");
+    const sys=`你是一个专业的效率助手和学习规划师。回答清晰、结构化、有深度。需要时用标题和列表组织内容。拆解任务时步骤具体可执行。用户当前任务背景：\n${ctx}`;
+    const parts=[{text:sys+"\n\n用户："+msg}];
+    imgs.forEach(p=>parts.push({inline_data:{mime_type:p.type,data:p.data}}));
     try{
-      var reply=await callGemini(apiKey,[{parts:parts}]);
-      setMsgs(function(m){return[...m,{role:"ai",text:reply,images:[]}];});
+      const reply=await callGemini(apiKey,[{parts}]);
+      setMsgs(m=>[...m,{role:"ai",text:reply,images:[]}]);
       if(btid){
-        var steps=reply.split("\n").filter(function(l){return l.trim().startsWith("•");}).map(function(l){return l.replace(/^•\s*/,"").trim();}).filter(Boolean);
+        const steps=reply.split("\n").filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim()).filter(Boolean);
         if(steps.length)onSubtasksAdded(btid,steps);
       }
     }catch(e){
-      setMsgs(function(m){return[...m,{role:"ai",text:"错误："+e.message+"\n\n提示：请到 aistudio.google.com 重新生成免费Key",images:[]}];});
+      setMsgs(m=>[...m,{role:"ai",text:`错误：${e.message}`,images:[]}]);
     }
     setLoading(false);
   }
 
   if(!open)return null;
-  return React.createElement("div",{style:{position:"fixed",right:0,top:0,height:"100%",width:"min(580px,100vw)",background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 24px rgba(0,0,0,.1)"}},
-    React.createElement("div",{style:{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}},
-      React.createElement("span",{style:{fontSize:14,fontWeight:500}},
-        "✨ AI助手 ",React.createElement("span",{style:{fontSize:11,color:"#aaa"}},"Gemini")
-      ),
-      React.createElement("div",{style:{display:"flex",gap:6,alignItems:"center"}},
-        React.createElement("button",{onClick:openNewWin,style:{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}},"⬡ 新窗口"),
-        React.createElement("button",{onClick:()=>setShowKey(v=>!v),style:{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}},apiKey?"🔑 已设置":"🔑 设置Key"),
-        React.createElement("button",{onClick:onClose,style:{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"4px 9px",cursor:"pointer"}},"✕")
-      )
-    ),
-    showKey&&React.createElement("div",{style:{padding:12,background:"#fffbe6",borderBottom:"0.5px solid #e8e0c0",flexShrink:0}},
-      React.createElement("div",{style:{fontSize:12,color:"#666",marginBottom:6}},"Gemini API Key："),
-      React.createElement("div",{style:{display:"flex",gap:6}},
-        React.createElement("input",{defaultValue:apiKey,placeholder:"AIza...",id:"gkey",type:"password",style:{flex:1,fontSize:12,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:5}}),
-        React.createElement("button",{onClick:()=>saveKey(document.getElementById("gkey").value.trim()),style:{fontSize:12,padding:"6px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}},"保存")
-      ),
-      React.createElement("div",{style:{fontSize:11,color:"#999",marginTop:6,lineHeight:1.7}},
-        "免费Key：",React.createElement("a",{href:"https://aistudio.google.com/app/apikey",target:"_blank",style:{color:"#185FA5"}},"aistudio.google.com"),
-        " → 选 Gemini 2.5 Flash",React.createElement("br"),
-        "自动尝试：2.5-flash → 2.0-flash → 1.5-flash"
-      )
-    ),
-    React.createElement("div",{ref:msgRef,style:{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}},
-      msgs.map((m,i)=>React.createElement("div",{key:i},
-        m.images&&m.images.length>0&&React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6,justifyContent:m.role==="user"?"flex-end":"flex-start"}},
-          m.images.map((src,j)=>React.createElement("img",{key:j,src:src,style:{maxWidth:200,maxHeight:140,borderRadius:6,objectFit:"cover"}}))
-        ),
-        m.text&&React.createElement("div",{style:{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#666",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}},m.text)
-      )),
-      loading&&React.createElement("div",{style:{fontSize:13,color:"#aaa",fontStyle:"italic"},className:"pulse"},"思考中…")
-    ),
-    pendingImgs.length>0&&React.createElement("div",{style:{padding:"6px 12px",borderTop:"0.5px solid #f0ede8",display:"flex",gap:8,flexWrap:"wrap",flexShrink:0}},
-      pendingImgs.map((img,i)=>React.createElement("div",{key:i,style:{position:"relative"}},
-        React.createElement("img",{src:img.preview,style:{width:56,height:56,borderRadius:6,objectFit:"cover"}}),
-        React.createElement("button",{onClick:()=>setPendingImgs(imgs=>imgs.filter((_,j)=>j!==i)),style:{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:10,lineHeight:"16px",padding:0}},"✕")
-      ))
-    ),
-    React.createElement("div",{style:{padding:"10px 12px",borderTop:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",gap:8,flexShrink:0}},
-      React.createElement("textarea",{value:input,onChange:e=>setInput(e.target.value),
-        onKeyDown:e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();if(input.trim()||pendingImgs.length)doSend(input);}},
-        placeholder:"输入消息… (Enter发送，Shift+Enter换行)",rows:2,
-        style:{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,resize:"none",lineHeight:1.5,fontFamily:"inherit"}}),
-      React.createElement("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-        React.createElement("button",{onClick:()=>fileRef.current.click(),style:{padding:"6px 12px",border:"0.5px solid #ccc",background:"#f7f6f3",borderRadius:6,fontSize:12,cursor:"pointer",color:"#666"}},"📎 图片"),
-        React.createElement("input",{ref:fileRef,type:"file",accept:"image/*",multiple:true,style:{display:"none"},onChange:handleFile}),
-        React.createElement("span",{style:{flex:1,fontSize:11,color:"#bbb"}},"支持截图、图片分析"),
-        React.createElement("button",{onClick:()=>doSend(input),disabled:loading||(!input.trim()&&!pendingImgs.length),style:{padding:"7px 20px",background:loading?"#ccc":"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:loading?"default":"pointer",fontWeight:500}},"发送")
-      )
-    )
+  return(
+    <div style={{position:"fixed",right:0,top:0,height:"100%",width:"min(580px,100vw)",background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 24px rgba(0,0,0,.1)"}}>
+      <div style={{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <span style={{fontSize:14,fontWeight:500}}>✨ AI助手 <span style={{fontSize:11,color:"#aaa"}}>Gemini</span></span>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <button onClick={openNewWin} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}}>⬡ 新窗口</button>
+          <button onClick={()=>setShowKey(v=>!v)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}}>{apiKey?"🔑 已设置":"🔑 设置Key"}</button>
+          <button onClick={onClose} style={{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"4px 9px",cursor:"pointer"}}>✕</button>
+        </div>
+      </div>
+
+      {showKey&&(
+        <div style={{padding:12,background:"#fffbe6",borderBottom:"0.5px solid #e8e0c0",flexShrink:0}}>
+          <div style={{fontSize:12,color:"#666",marginBottom:6}}>Gemini API Key：</div>
+          <div style={{display:"flex",gap:6}}>
+            <input defaultValue={apiKey} placeholder="AIza..." id="gkey" type="password" style={{flex:1,fontSize:12,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:5}}/>
+            <button onClick={()=>saveKey(document.getElementById("gkey").value.trim())} style={{fontSize:12,padding:"6px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}}>保存</button>
+          </div>
+          <div style={{fontSize:11,color:"#999",marginTop:6,lineHeight:1.7}}>
+            免费Key：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a> → 选 Gemini 2.5 Flash<br/>
+            付费Key同样支持 · 自动尝试：2.5-flash → 2.0-flash → 1.5-flash
+          </div>
+        </div>
+      )}
+
+      <div ref={msgRef} style={{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}}>
+        {msgs.map((m,i)=>(
+          <div key={i}>
+            {m.images&&m.images.length>0&&(
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6,justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                {m.images.map((src,j)=><img key={j} src={src} style={{maxWidth:200,maxHeight:140,borderRadius:6,objectFit:"cover"}}/>)}
+              </div>
+            )}
+            {m.text&&(
+              <div style={{fontSize:13,lineHeight:1.65,background:m.role==="ai"?"#f7f6f3":"transparent",padding:m.role==="ai"?"10px 12px":"0",borderRadius:8,color:m.role==="ai"?"#1a1a1a":"#555",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>
+                {m.text}
+              </div>
+            )}
+          </div>
+        ))}
+        {loading&&<div style={{fontSize:13,color:"#aaa",fontStyle:"italic"}} className="pulse">思考中…</div>}
+      </div>
+
+      {pendingImgs.length>0&&(
+        <div style={{padding:"8px 12px",borderTop:"0.5px solid #f0ede8",display:"flex",gap:8,flexWrap:"wrap",flexShrink:0,background:"#fafafa"}}>
+          {pendingImgs.map((img,i)=>(
+            <div key={i} style={{position:"relative"}}>
+              <img src={img.preview} style={{width:56,height:56,borderRadius:6,objectFit:"cover"}}/>
+              <button onClick={()=>setPendingImgs(imgs=>imgs.filter((_,j)=>j!==i))} style={{position:"absolute",top:-4,right:-4,width:18,height:18,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:11,lineHeight:"18px",padding:0,textAlign:"center"}}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{padding:"10px 12px",borderTop:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",gap:8,flexShrink:0,background:"#fff"}}>
+        <textarea
+          value={input}
+          onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();if(input.trim()||pendingImgs.length)doSend(input);}}}
+          placeholder="输入消息… (Enter发送，Shift+Enter换行)"
+          rows={2}
+          style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,resize:"none",lineHeight:1.5,fontFamily:"inherit",outline:"none"}}
+        />
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>fileRef.current.click()} style={{padding:"6px 12px",border:"0.5px solid #ccc",background:"#f7f6f3",borderRadius:6,fontSize:12,cursor:"pointer",color:"#555",flexShrink:0}}>📎 图片</button>
+          <input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={handleFile}/>
+          <span style={{flex:1,fontSize:11,color:"#ccc"}}>支持截图分析</span>
+          <button
+            onClick={()=>doSend(input)}
+            disabled={loading||(!input.trim()&&!pendingImgs.length)}
+            style={{padding:"7px 22px",background:loading?"#ccc":"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:loading?"default":"pointer",fontWeight:500,flexShrink:0}}
+          >发送</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1435,45 +1461,86 @@ function App(){
   const aiRef=useRef(null);
   const saveTimer=useRef(null);
   const isFirstLoad=useRef(true);
+  // Always-current refs for async save
+  const tasksRef=useRef(tasks);
+  const journalRef=useRef(journal);
+  const futureLogRef=useRef(futureLog);
+  const coursesRef=useRef(courses);
+  const nextIdRef=useRef(nextId);
+
+  // Keep refs in sync with state
+  useEffect(()=>{tasksRef.current=tasks;},[tasks]);
+  useEffect(()=>{journalRef.current=journal;},[journal]);
+  useEffect(()=>{futureLogRef.current=futureLog;},[futureLog]);
+  useEffect(()=>{coursesRef.current=courses;},[courses]);
+  useEffect(()=>{nextIdRef.current=nextId;},[nextId]);
 
   // load from gist on mount
-  useEffect(()=>{
-    if(ghToken&&gistId){
-      setSyncStatus("saving");
-      gistLoad(ghToken,gistId).then(data=>{
-        if(data){
-          if(data.tasks)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
-          if(data.journal)setJournal(data.journal);
-          if(data.futureLog)setFutureLog(data.futureLog);
-          if(data.courses)setCourses(data.courses.map(c=>({...BLANK_COURSE,...c})));
-          if(data.nextId)setNextId(data.nextId);
-        }
+  function loadFromGist(){
+    if(!ghToken||!gistId)return;
+    setSyncStatus("saving");
+    gistLoad(ghToken,gistId).then(data=>{
+      isFirstLoad.current=false; // Mark load done FIRST before setting state
+      if(data){
+        if(data.tasks&&data.tasks.length>0)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
+        if(data.journal&&Object.keys(data.journal).length>0)setJournal(data.journal);
+        if(data.futureLog)setFutureLog(data.futureLog);
+        if(data.courses&&data.courses.length>0)setCourses(data.courses.map(c=>({...BLANK_COURSE,...c})));
+        if(data.nextId)setNextId(data.nextId);
         setSyncStatus("saved");
-        isFirstLoad.current=false;
-      }).catch(()=>{setSyncStatus("error");isFirstLoad.current=false;});
+      } else {
+        setSyncStatus("idle");
+      }
+    }).catch(e=>{
+      console.error("Gist load failed:",e);
+      setSyncStatus("error");
+      isFirstLoad.current=false;
+    });
+  }
+  useEffect(()=>{
+    // Always mark load complete after a short delay
+    // so saves work even if no token configured
+    if(ghToken&&gistId){
+      loadFromGist();
     } else {
       isFirstLoad.current=false;
     }
+    // Safety: ensure isFirstLoad cleared after 5s no matter what
+    const safety=setTimeout(()=>{isFirstLoad.current=false;},5000);
+    return()=>clearTimeout(safety);
   },[]);
 
   // auto-save to gist (debounced)
   function triggerSave(t,j,fl,nid,cs){
-    if(isFirstLoad.current)return;
     if(!ghToken||!gistId){return;}
+    // Don't save during initial load
+    if(isFirstLoad.current)return;
     setSyncStatus("saving");
     clearTimeout(saveTimer.current);
+    // Capture current refs at call time, use passed values if provided
+    const tasksToSave=t!==undefined?t:tasksRef.current;
+    const journalToSave=j!==undefined?j:journalRef.current;
+    const flToSave=fl!==undefined?fl:futureLogRef.current;
+    const nidToSave=nid!==undefined?nid:nextIdRef.current;
+    const coursesToSave=cs!==undefined?cs:coursesRef.current;
     saveTimer.current=setTimeout(()=>{
-      gistSave(ghToken,gistId,{tasks:t,journal:j,futureLog:fl,courses:cs!==undefined?cs:courses,nextId:nid})
+      gistSave(ghToken,gistId,{
+        tasks:tasksToSave,
+        journal:journalToSave,
+        futureLog:flToSave,
+        courses:coursesToSave,
+        nextId:nidToSave
+      })
         .then(()=>setSyncStatus("saved"))
-        .catch(()=>setSyncStatus("error"));
-    },1500);
+        .catch(e=>{setSyncStatus("error");console.error("Gist save failed:",e);});
+    },1200);
   }
 
-  function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;triggerSave(next,journal,futureLog,nextId,courses);return next;});}
-  function setJournalAndSync(j){setJournal(j);triggerSave(tasks,j,futureLog,nextId,courses);}
-  function setFutureLogAndSync(fl){setFutureLog(fl);triggerSave(tasks,journal,fl,nextId,courses);}
+  function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;triggerSave(next,undefined,undefined,undefined,undefined);return next;});}
+  function setJournalAndSync(j){setJournal(j);triggerSave(undefined,j,undefined,undefined,undefined);}
+  function setFutureLogAndSync(fl){setFutureLog(fl);triggerSave(undefined,undefined,fl,undefined,undefined);}
   function updateCourse(updated){
-    setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+    setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);triggerSave(undefined,undefined,undefined,undefined,next);return next;});
   }
   function addCourse(c){
     setCourses(cs=>{const next=[...cs,c];triggerSave(tasks,journal,futureLog,nextId,next);return next;});
@@ -1491,10 +1558,11 @@ function App(){
   function aiBreak(id){const t=tasks.find(t=>t.id===id);if(!t)return;setAiOpen(true);setTimeout(()=>{if(aiRef.current)aiRef.current(t);},150);}
 
   function addTask(partial){
-    const newNid=nextId+1;
-    const t={...BLANK_TASK,...partial,id:nextId};
+    const newNid=nextIdRef.current+1;
+    const t={...BLANK_TASK,...partial,id:nextIdRef.current};
     setNextId(newNid);
-    setTasksAndSync(ts=>{const next=[...ts,t];triggerSave(next,journal,futureLog,newNid);return next;});
+    nextIdRef.current=newNid;
+    setTasksAndSync(ts=>{const next=[...ts,t];triggerSave(next,undefined,undefined,newNid,undefined);return next;});
   }
   function addQuick(){if(!quick.trim())return;addTask({title:quick.trim(),project:1,due:"",priority:"normal"});setQuick("");}
   function addModal(){if(!nTask.title.trim())return;addTask(nTask);setShowAdd(false);setNTask({title:"",project:1,due:todayStr(),startDate:"",priority:"today"});}
@@ -1563,7 +1631,12 @@ function App(){
       <div style={{background:"#fff",borderBottom:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:16,fontWeight:500}}>{projView?projView.name:navTop.find(n=>n.id===view)?.l||""}</span>
-          <SyncBadge status={syncStatus}/>
+          <SyncBadge status={syncStatus} hasToken={!!ghToken}/>
+          {ghToken&&gistId&&(
+            <button onClick={loadFromGist} title="重新从Gist拉取数据" style={{fontSize:11,background:"none",border:"0.5px solid #e0ddd6",borderRadius:5,padding:"2px 8px",cursor:"pointer",color:"#888",flexShrink:0}}>
+              {syncStatus==="saving"?"⏳":"🔄"}
+            </button>
+          )}
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
           <span style={{fontSize:13,color:"#aaa"}}>{new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"short"})}</span>
@@ -1571,6 +1644,12 @@ function App(){
         </div>
       </div>
 
+      {!ghToken&&(
+        <div style={{background:"#EBF3FB",borderBottom:"0.5px solid #B5D4F4",padding:"8px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+          <span style={{fontSize:12,color:"#185FA5"}}>📱 跨设备同步未开启 — 数据仅存本地浏览器</span>
+          <button onClick={()=>setShowSettings(true)} style={{fontSize:12,color:"#185FA5",background:"none",border:"0.5px solid #185FA5",borderRadius:5,padding:"2px 10px",cursor:"pointer"}}>开启同步</button>
+        </div>
+      )}
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
         {view==="today"&&<>
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
