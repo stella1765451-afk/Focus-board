@@ -108,6 +108,25 @@ async function gistCreate(token){
   return data.id;
 }
 
+async function gistFindOrCreate(token){
+  // Search for existing "专注板数据" gist first
+  try{
+    const res=await fetch("https://api.github.com/gists?per_page=100",{
+      headers:{Authorization:`token ${token}`}
+    });
+    if(res.ok){
+      const list=await res.json();
+      const found=list.find(g=>
+        g.description==="专注板数据"&&
+        g.files&&g.files[GIST_FILENAME]
+      );
+      if(found)return found.id;
+    }
+  }catch(e){}
+  // Not found, create new
+  return await gistCreate(token);
+}
+
 /* ═══════════════════════════════════════════
    LOCAL STORAGE (fallback + settings)
 ═══════════════════════════════════════════ */
@@ -980,12 +999,15 @@ function SettingsPanel({onClose,onSynced}){
   const [msg,setMsg]=useState("");
   async function connect(){
     if(!token.trim()){setMsg("请输入 Token");return;}
-    setStatus("saving");setMsg("");
+    setStatus("saving");setMsg("查找已有数据…");
     try{
-      let id=gistId;
-      if(!id){id=await gistCreate(token.trim());lsSet("zj_gist_id",id);setGistId(id);}
+      // Always search for existing gist first - fixes cross-device sync
+      const id=await gistFindOrCreate(token.trim());
       lsSet("zj_gh_token",token.trim());
-      setStatus("saved");setMsg("✓ 连接成功！数据将自动同步到 GitHub Gist");
+      lsSet("zj_gist_id",id);
+      setGistId(id);
+      setStatus("saved");
+      setMsg("✓ 连接成功！Gist ID: "+id.slice(0,8)+"…");
       onSynced(token.trim(),id);
     }catch(e){setStatus("error");setMsg("连接失败："+e.message);}
   }
@@ -997,17 +1019,23 @@ function SettingsPanel({onClose,onSynced}){
       </div>
       <div style={{padding:"20px 24px",display:"flex",flexDirection:"column",gap:16}}>
         <div style={{background:"#EBF3FB",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#185FA5",lineHeight:1.6}}>
-          数据存储在你的 GitHub Gist（私有），任何设备打开都能同步。Token 只存在本地浏览器，不经过任何服务器。
+          数据存在你的 GitHub Gist（私有）。每台设备第一次使用：输入同一个 Token → 点连接 → 自动找到已有数据。Token 只存本地浏览器。
         </div>
         <div>
           <div style={{fontSize:12,color:"#666",marginBottom:6}}>GitHub Personal Access Token（gist 权限）</div>
           <input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="ghp_..." style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
           <div style={{fontSize:11,color:"#aaa",marginTop:4}}>没有 Token？→ GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → 只勾 gist 权限</div>
         </div>
-        {gistId&&<div style={{fontSize:12,color:"#0F6E56"}}>✓ 已绑定 Gist: {gistId.slice(0,8)}…</div>}
-        {msg&&<div style={{fontSize:13,color:status==="saved"?"#0F6E56":"#A32D2D"}}>{msg}</div>}
+        {gistId&&(
+          <div style={{background:"#f7f6f3",borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:12,color:"#0F6E56",marginBottom:4}}>✓ 已绑定 Gist</div>
+            <div style={{fontSize:11,color:"#666",fontFamily:"monospace",wordBreak:"break-all"}}>{gistId}</div>
+            <div style={{fontSize:11,color:"#aaa",marginTop:4}}>换设备时：输入同一个 Token 点连接，会自动找到这个 Gist</div>
+          </div>
+        )}
+        {msg&&<div style={{fontSize:13,color:status==="saved"?"#0F6E56":status==="saving"?"#854F0B":"#A32D2D",lineHeight:1.5}}>{msg}</div>}
         <button onClick={connect} style={{padding:"10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>
-          {gistId?"重新连接":"连接 GitHub Gist"}
+          {status==="saving"?"连接中…":gistId?"重新搜索并连接":"连接 GitHub Gist"}
         </button>
       </div>
     </div>
