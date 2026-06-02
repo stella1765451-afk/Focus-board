@@ -1644,6 +1644,8 @@ function App(){
   const futureLogRef=useRef(futureLog);
   const coursesRef=useRef(courses);
   const nextIdRef=useRef(nextId);
+  const ghTokenRef=useRef(lsGet("zj_gh_token",""));
+  const gistIdRef=useRef(lsGet("zj_gist_id",""));
 
   // Keep refs in sync with state
   useEffect(()=>{tasksRef.current=tasks;},[tasks]);
@@ -1651,12 +1653,16 @@ function App(){
   useEffect(()=>{futureLogRef.current=futureLog;},[futureLog]);
   useEffect(()=>{coursesRef.current=courses;},[courses]);
   useEffect(()=>{nextIdRef.current=nextId;},[nextId]);
+  useEffect(()=>{ghTokenRef.current=ghToken;},[ghToken]);
+  useEffect(()=>{gistIdRef.current=gistId;},[gistId]);
 
   // load from gist on mount
   function loadFromGist(){
-    if(!ghToken||!gistId)return;
+    const tok=ghTokenRef.current||ghToken;
+    const gid=gistIdRef.current||gistId;
+    if(!tok||!gid)return;
     setSyncStatus("saving");
-    gistLoad(ghToken,gistId).then(data=>{
+    gistLoad(tok,gid).then(data=>{
       isFirstLoad.current=false; // Mark load done FIRST before setting state
       if(data){
         if(data.tasks&&data.tasks.length>0)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
@@ -1677,7 +1683,9 @@ function App(){
   useEffect(()=>{
     // Always mark load complete after a short delay
     // so saves work even if no token configured
-    if(ghToken&&gistId){
+    const tok=ghTokenRef.current||ghToken;
+    const gid=gistIdRef.current||gistId;
+    if(tok&&gid){
       loadFromGist();
     } else {
       isFirstLoad.current=false;
@@ -1689,7 +1697,9 @@ function App(){
 
   // auto-save to gist (debounced)
   function triggerSave(t,j,fl,nid,cs){
-    if(!ghToken||!gistId){return;}
+    const tok=ghTokenRef.current;
+    const gid=gistIdRef.current;
+    if(!tok||!gid){return;}
     // Don't save during initial load
     if(isFirstLoad.current)return;
     setSyncStatus("saving");
@@ -1701,7 +1711,7 @@ function App(){
     const nidToSave=nid!==undefined?nid:nextIdRef.current;
     const coursesToSave=cs!==undefined?cs:coursesRef.current;
     saveTimer.current=setTimeout(()=>{
-      gistSave(ghToken,gistId,{
+      gistSave(tok,gid,{
         tasks:tasksToSave,
         journal:journalToSave,
         futureLog:flToSave,
@@ -1877,7 +1887,7 @@ function App(){
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
     {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
-    {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);}}/>}
+    {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);ghTokenRef.current=t;gistIdRef.current=id;isFirstLoad.current=false;setTimeout(loadFromGist,100);}}/>}
 
     {showAdd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{background:"#fff",borderRadius:12,padding:24,width:400,boxShadow:"0 8px 40px rgba(0,0,0,.15)"}} className="fade-in">
