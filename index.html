@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
+/* ── Base ── */
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f7f6f3;color:#1a1a1a}
 input,select,button,textarea{font-family:inherit}
@@ -29,6 +30,39 @@ textarea{resize:vertical}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .pulse{animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* ── Dark mode ── */
+body.dark-mode{background:#1a1728;color:#f0eaff}
+body.dark-mode input,body.dark-mode select,body.dark-mode textarea{background:#2a2440;color:#f0eaff;border-color:#3d3560!important}
+body.dark-mode ::-webkit-scrollbar-thumb{background:#3d3560}
+
+/* ── Candy theme variables ── */
+:root{
+  --candy-pink:#FFB3C6;--candy-peach:#FFCBA4;--candy-yellow:#FFF0A0;
+  --candy-mint:#B8F0D8;--candy-sky:#A8DAFF;--candy-lavender:#D4B8FF;
+  --candy-glow-pink:rgba(255,179,198,.35);--candy-glow-mint:rgba(184,240,216,.35);
+  --candy-glow-sky:rgba(168,218,255,.35);
+}
+
+/* ── Cat pixel animations ── */
+@keyframes cat-idle{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+@keyframes cat-walk{0%{transform:translateX(0)}100%{transform:translateX(60px)}}
+@keyframes cat-celebrate{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-8deg) scale(1.1)}75%{transform:rotate(8deg) scale(1.1)}}
+@keyframes cat-sleep{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.92)}}
+@keyframes cat-tail{0%,100%{transform:rotate(0)}50%{transform:rotate(15deg)}}
+@keyframes cat-jump{0%,100%{transform:translateY(0)}40%{transform:translateY(-18px)}60%{transform:translateY(-14px)}}
+@keyframes cat-sad{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg) translateY(2px)}}
+@keyframes star-pop{0%{opacity:0;transform:scale(0) rotate(0)}50%{opacity:1;transform:scale(1.3) rotate(180deg)}100%{opacity:0;transform:scale(0) rotate(360deg)}}
+@keyframes float-up{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-28px)}}
+
+/* ── Routine execution fullscreen ── */
+.routine-fs{position:fixed;inset:0;z-index:700;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.routine-fs.light{background:linear-gradient(135deg,#FFF5FA 0%,#F0F8FF 50%,#F5FFF5 100%)}
+.routine-fs.dark{background:linear-gradient(135deg,#1a0a2e 0%,#0d1a3a 50%,#0a2e1a 100%)}
+@keyframes ring-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,179,198,.5)}70%{box-shadow:0 0 0 20px rgba(255,179,198,0)}}
+@keyframes ring-pulse-dark{0%,100%{box-shadow:0 0 0 0 rgba(212,184,255,.4)}70%{box-shadow:0 0 0 24px rgba(212,184,255,0)}}
+@keyframes step-enter{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes complete-burst{0%{transform:scale(1)}30%{transform:scale(1.08)}60%{transform:scale(.97)}100%{transform:scale(1)}}
 </style>
 </head>
 <body>
@@ -3319,8 +3353,671 @@ function PomodoroStats({log}){
   );
 }
 
+
+// ═══════════════════════════════════════════
+// SOUND ENGINE — cute Web Audio tones
+// ═══════════════════════════════════════════
+const SoundEngine=(()=>{
+  let ctx=null;
+  function getCtx(){if(!ctx)ctx=new(window.AudioContext||window.webkitAudioContext)();return ctx;}
+  function tone(freq,dur,type="sine",vol=0.18,delay=0){
+    try{
+      const c=getCtx();const g=c.createGain();const o=c.createOscillator();
+      o.type=type;o.frequency.setValueAtTime(freq,c.currentTime+delay);
+      g.gain.setValueAtTime(0,c.currentTime+delay);
+      g.gain.linearRampToValueAtTime(vol,c.currentTime+delay+0.02);
+      g.gain.exponentialRampToValueAtTime(0.001,c.currentTime+delay+dur);
+      o.connect(g);g.connect(c.destination);
+      o.start(c.currentTime+delay);o.stop(c.currentTime+delay+dur+0.05);
+    }catch(e){}
+  }
+  return{
+    // step start: gentle chime ding-ding
+    stepStart:()=>{tone(880,0.18,"sine",0.14);tone(1108,0.22,"sine",0.10,0.12);},
+    // countdown beep: soft heartbeat last 3s
+    countdownBeep:()=>{tone(440,0.08,"sine",0.08);},
+    // step done: rising happy ding
+    stepDone:()=>{tone(523,0.12,"sine",0.15);tone(659,0.12,"sine",0.13,0.1);tone(784,0.25,"sine",0.18,0.2);},
+    // routine complete: cheerful melody
+    routineDone:()=>{
+      [[523,0],[659,0.13],[784,0.26],[1047,0.42],[784,0.58],[880,0.72],[1047,0.88]].forEach(([f,d])=>tone(f,0.2,"sine",0.16,d));
+    },
+    // task slot linked: soft pop
+    taskLinked:()=>{tone(660,0.08,"triangle",0.12);tone(880,0.14,"triangle",0.1,0.07);},
+  };
+})();
+
+// ═══════════════════════════════════════════
+// PIXEL CAT — 16-bit style, random color
+// ═══════════════════════════════════════════
+// Cat state: idle | walk | celebrate | sleep | sad | run
+// Color palettes: [body, belly, accent, eye, nose]
+const CAT_PALETTES=[
+  ["#F4A261","#FFDBB5","#E76F51","#4A3728","#FF8FA3"], // orange
+  ["#A8DADC","#E8F8F8","#457B9D","#2C3E50","#FFB3C6"], // teal
+  ["#9B89C4","#E8E0F5","#6B5CA5","#2C1654","#FFB3C6"], // purple
+  ["#F8C8D4","#FFF0F5","#E8809A","#4A2030","#C8A0B0"], // pink
+  ["#8BC34A","#F1F8E9","#558B2F","#1B3A0A","#FFB3C6"], // green
+  ["#90CAF9","#E3F2FD","#1565C0","#0D2137","#FFB3C6"], // blue
+  ["#FFCC80","#FFF8E1","#FF8F00","#3E2000","#FF8FA3"], // yellow
+  ["#CE93D8","#F3E5F5","#8E24AA","#2A0040","#FFB3C6"], // violet
+];
+
+function useCatPalette(){
+  const [pal]=useState(()=>CAT_PALETTES[Math.floor(Math.random()*CAT_PALETTES.length)]);
+  return pal;
+}
+
+// Pixel grid renderer — each cell is a colored square
+function PixelGrid({pixels,cellSize=3,style={}}){
+  const rows=pixels.length,cols=pixels[0].length;
+  return(
+    <div style={{display:"grid",gridTemplateColumns:`repeat(${cols},${cellSize}px)`,gap:0,...style}}>
+      {pixels.map((row,r)=>row.map((cell,c)=>(
+        <div key={r+","+c} style={{width:cellSize,height:cellSize,background:cell||"transparent"}}/>
+      )))}
+    </div>
+  );
+}
+
+// Build cat pixel frames for different states
+function buildCatFrames(pal){
+  const [B,W,A,E,N]=pal; // body,belly,accent,eye,nose
+  const _=null;
+  // 16x14 pixel cat, 2 walk frames, celebrate, sleep, sad
+  const idle=[
+    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
+    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
+    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
+    [B,E,B,B,E,B,B,B,B,E,B,B,E,B,_,_],
+    [B,B,N,B,B,B,B,B,B,B,N,B,B,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [_,B,B,_,B,B,_,_,B,B,_,B,B,_,_,_],
+    [_,B,B,_,B,B,_,_,B,B,_,B,B,_,_,_],
+    [_,A,A,_,A,A,_,_,A,A,_,A,A,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  ];
+  const walk=[
+    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
+    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
+    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
+    [B,E,B,B,E,B,B,B,B,E,B,B,E,B,_,_],
+    [B,B,N,B,B,B,B,B,B,B,N,B,B,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [_,_,B,B,_,B,B,_,_,B,B,_,B,_,_,_],
+    [_,B,B,_,_,B,B,_,B,B,_,_,B,B,_,_],
+    [_,A,_,_,_,A,A,_,A,_,_,_,A,A,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  ];
+  const sleep=[
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
+    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
+    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
+    [B,A,B,B,A,B,B,B,B,A,B,B,A,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
+    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
+    [_,B,B,B,B,B,B,B,B,B,B,B,B,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+  ];
+  return{idle,walk,sleep,celebrate:idle,sad:sleep};
+}
+
+function PixelCat({state="idle",size=3,darkMode=false}){
+  const pal=useCatPalette();
+  const frames=buildCatFrames(pal);
+  const [frame,setFrame]=useState(0);
+  const [walkX,setWalkX]=useState(0);
+  const [stars,setStars]=useState([]);
+
+  // Frame cycling
+  useEffect(()=>{
+    if(state==="walk"){
+      const t=setInterval(()=>setFrame(f=>(f+1)%2),300);
+      return()=>clearInterval(t);
+    }
+    setFrame(0);
+  },[state]);
+
+  // Walk drift
+  useEffect(()=>{
+    if(state==="walk"){
+      const t=setInterval(()=>setWalkX(x=>{if(x>=50){return 0;}return x+2;}),60);
+      return()=>clearInterval(t);
+    }
+    setWalkX(0);
+  },[state]);
+
+  // Celebrate stars
+  useEffect(()=>{
+    if(state==="celebrate"){
+      const make=()=>[...Array(5)].map((_,i)=>({id:Date.now()+i,x:Math.random()*80-10,delay:Math.random()*0.4}));
+      setStars(make());
+      const t=setInterval(()=>setStars(make()),1200);
+      return()=>clearInterval(t);
+    }
+    setStars([]);
+  },[state]);
+
+  const pixelMap={idle:frames.idle,walk:frames[frame===0?"idle":"walk"],celebrate:frames.idle,sleep:frames.sleep,sad:frames.sleep,run:frames.walk};
+  const pixels=pixelMap[state]||frames.idle;
+
+  const anim={
+    idle:"cat-idle 2.5s ease-in-out infinite",
+    walk:"none",
+    celebrate:"cat-celebrate 0.5s ease-in-out infinite",
+    sleep:"cat-sleep 3s ease-in-out infinite",
+    sad:"cat-sad 2s ease-in-out infinite",
+    run:"none",
+  };
+
+  return(
+    <div style={{position:"relative",display:"inline-block"}}>
+      {state==="celebrate"&&stars.map(s=>(
+        <div key={s.id} style={{position:"absolute",top:-16,left:s.x+"%",fontSize:10,animation:`star-pop 1.2s ${s.delay}s ease-out forwards`,pointerEvents:"none"}}>
+          {["⭐","✨","💫","🌟"][Math.floor(Math.random()*4)]}
+        </div>
+      ))}
+      <div style={{animation:anim[state],transform:`translateX(${walkX}px)`,transition:state==="walk"?"none":"transform .3s"}}>
+        <PixelGrid pixels={pixels} cellSize={size}/>
+      </div>
+      {state==="sleep"&&(
+        <div style={{position:"absolute",top:-8,right:-4,fontSize:10,animation:"float-up 2s ease-out infinite",opacity:0}}>💤</div>
+      )}
+    </div>
+  );
+}
+
+// Status cat widget — lives in today view, reflects task completion
+function StatusCat({tasks,darkMode}){
+  const done=tasks.filter(t=>t.done).length;
+  const total=tasks.length;
+  const overdue=tasks.filter(t=>isOverdue(t.due)&&!t.done).length;
+  const todayFocus=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today")).length;
+  const ratio=total>0?done/total:0;
+
+  let state="idle",label="",color="#888";
+  if(total===0){state="sleep";label="今天还没有任务";color="#aaa";}
+  else if(ratio>=1){state="celebrate";label="今天全部完成啦！";color="#0F6E56";}
+  else if(overdue>2){state="sad";label=`${overdue}个任务逾期了...`;color="#A32D2D";}
+  else if(todayFocus===0&&ratio>0.5){state="walk";label="继续走！还不错~";color="#185FA5";}
+  else if(ratio>0){state="walk";label=`已完成 ${done}/${total}`;color="#185FA5";}
+  else{state="idle";label="等你开始今天~";color="#854F0B";}
+
+  return(
+    <div style={{background:darkMode?"rgba(255,255,255,.05)":"#fff",border:`0.5px solid ${darkMode?"rgba(255,255,255,.1)":"#e0ddd6"}`,borderRadius:12,padding:"12px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:14}}>
+      <PixelCat state={state} size={3} darkMode={darkMode}/>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,color:color,fontWeight:500,marginBottom:2}}>{label}</div>
+        {total>0&&(
+          <div style={{height:4,background:darkMode?"rgba(255,255,255,.1)":"#f0ede8",borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${ratio*100}%`,background:ratio>=1?"#0F6E56":ratio>0.5?"#185FA5":"#854F0B",borderRadius:2,transition:"width .6s ease"}}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// ROUTINE SYSTEM
+// ═══════════════════════════════════════════
+const ROUTINE_STORAGE_KEY="zj_routines_v2";
+const DEFAULT_ROUTINES=[
+  {
+    id:1,name:"🌅 早晨启动",color:"#FFB3C6",emoji:"🌅",scheduleType:"morning",
+    steps:[
+      {id:1,type:"fixed",title:"喝一大杯水",duration:2,note:"站起来，去厨房，不要看手机"},
+      {id:2,type:"fixed",title:"拉伸放松",duration:5,note:"颈部、肩膀、腰部各绕圈10次"},
+      {id:3,type:"fixed",title:"整理桌面",duration:3,note:"清空桌面，只留今天需要的东西"},
+      {id:4,type:"fixed",title:"深呼吸",duration:3,note:"4秒吸气，7秒屏气，8秒呼出，重复4次"},
+    ]
+  },
+  {
+    id:2,name:"📚 学习流程",color:"#A8DAFF",emoji:"📚",scheduleType:"anytime",
+    steps:[
+      {id:1,type:"fixed",title:"准备材料",duration:3,note:"打开课本/软件，准备笔记本，喝水"},
+      {id:2,type:"task_slot",label:"深度学习",duration:45,taskIndex:0},
+      {id:3,type:"fixed",title:"起立活动",duration:5,note:"起来走走，做几个深蹲，喝水"},
+      {id:4,type:"task_slot",label:"继续学习",duration:45,taskIndex:1},
+      {id:5,type:"fixed",title:"今日收尾",duration:5,note:"写下今天学了什么，明天从哪继续"},
+    ]
+  },
+  {
+    id:3,name:"🌙 收尾流程",color:"#D4B8FF",emoji:"🌙",scheduleType:"evening",
+    steps:[
+      {id:1,type:"fixed",title:"整理工作区",duration:3,note:"把桌面整理干净，关掉不需要的标签页"},
+      {id:2,type:"fixed",title:"记录今日产出",duration:5,note:"写下今天完成了什么，哪怕很小"},
+      {id:3,type:"fixed",title:"给明天写一句话",duration:2,note:"明天第一件事是什么？"},
+    ]
+  },
+];
+
+function loadRoutines(){
+  try{const r=JSON.parse(localStorage.getItem(ROUTINE_STORAGE_KEY));return r&&r.length?r:DEFAULT_ROUTINES;}
+  catch(e){return DEFAULT_ROUTINES;}
+}
+function saveRoutines(r){try{localStorage.setItem(ROUTINE_STORAGE_KEY,JSON.stringify(r));}catch(e){}}
+
+// ── Routine Manager (edit templates) ──
+function RoutineManager({onClose,darkMode}){
+  const [routines,setRoutines]=useState(loadRoutines);
+  const [editing,setEditing]=useState(null); // routine id being edited
+  const [newStepTitle,setNewStepTitle]=useState("");
+
+  function save(r){setRoutines(r);saveRoutines(r);}
+  function addRoutine(){
+    const id=Date.now();
+    const r={id,name:"新流程",color:CAT_PALETTES[Math.floor(Math.random()*CAT_PALETTES.length)][0],emoji:"⚡",scheduleType:"anytime",steps:[]};
+    const updated=[...routines,r];save(updated);setEditing(id);
+  }
+  function deleteRoutine(id){if(confirm("删除这个流程？")){save(routines.filter(r=>r.id!==id));if(editing===id)setEditing(null);}}
+  function updateRoutine(id,patch){save(routines.map(r=>r.id===id?{...r,...patch}:r));}
+  function addStep(rId,type){
+    const step={id:Date.now(),type,title:type==="task_slot"?"":newStepTitle||"新步骤",duration:10,note:"",taskIndex:0,label:"深度专注"};
+    updateRoutine(rId,{steps:[...(routines.find(r=>r.id===rId)?.steps||[]),step]});
+    setNewStepTitle("");
+  }
+  function removeStep(rId,sId){updateRoutine(rId,{steps:routines.find(r=>r.id===rId).steps.filter(s=>s.id!==sId)});}
+  function updateStep(rId,sId,patch){updateRoutine(rId,{steps:routines.find(r=>r.id===rId).steps.map(s=>s.id===sId?{...s,...patch}:s)});}
+  function moveStep(rId,idx,dir){
+    const r=routines.find(r=>r.id===rId);if(!r)return;
+    const steps=[...r.steps];const ni=idx+dir;
+    if(ni<0||ni>=steps.length)return;
+    [steps[idx],steps[ni]]=[steps[ni],steps[idx]];
+    updateRoutine(rId,{steps});
+  }
+
+  const dm=darkMode;
+  const bg=dm?"#1a1728":"#fff";
+  const border=dm?"rgba(255,255,255,.1)":"#e0ddd6";
+  const text=dm?"#f0eaff":"#1a1a1a";
+  const sub=dm?"rgba(255,255,255,.4)":"#888";
+
+  const editingRoutine=routines.find(r=>r.id===editing);
+  const EMOJIS=["🌅","📚","🌙","💪","🎨","⚡","🎯","🧘","☕","🖥️","🎵","✨"];
+  const COLORS=["#FFB3C6","#A8DAFF","#D4B8FF","#B8F0D8","#FFCBA4","#FFF0A0"];
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:16,overflowY:"auto"}}>
+      <div style={{background:bg,borderRadius:14,width:"100%",maxWidth:560,marginBottom:40,boxShadow:"0 12px 48px rgba(0,0,0,.25)"}} className="fade-in">
+        <div style={{padding:"18px 20px 14px",borderBottom:`0.5px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:15,fontWeight:600,color:text}}>▶ Routine 管理</div>
+          <button onClick={onClose} style={{fontSize:18,color:sub,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+
+        {/* Routine list */}
+        <div style={{padding:"12px 20px",display:"flex",flexDirection:"column",gap:8,maxHeight:"35vh",overflowY:"auto"}}>
+          {routines.map(r=>(
+            <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:9,border:`1.5px solid ${editing===r.id?r.color:border}`,background:editing===r.id?(dm?r.color+"22":r.color+"18"):dm?"rgba(255,255,255,.03)":"#fafaf8",cursor:"pointer"}} onClick={()=>setEditing(r.id===editing?null:r.id)}>
+              <span style={{fontSize:18}}>{r.emoji}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:500,color:text}}>{r.name}</div>
+                <div style={{fontSize:11,color:sub}}>{r.steps.length}个步骤 · 约{r.steps.reduce((a,s)=>a+(s.duration||0),0)}分钟</div>
+              </div>
+              <button onClick={e=>{e.stopPropagation();deleteRoutine(r.id);}} style={{fontSize:12,color:"#bbb",background:"none",border:"none",cursor:"pointer",padding:"2px 6px"}}>🗑</button>
+            </div>
+          ))}
+          <button onClick={addRoutine} style={{padding:"9px",border:`1.5px dashed ${border}`,borderRadius:9,background:"transparent",fontSize:13,color:sub,cursor:"pointer"}}>+ 新建流程</button>
+        </div>
+
+        {/* Step editor */}
+        {editingRoutine&&(
+          <div style={{borderTop:`0.5px solid ${border}`,padding:"14px 20px"}}>
+            {/* Meta */}
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {EMOJIS.map(e=><button key={e} onClick={()=>updateRoutine(editingRoutine.id,{emoji:e})} style={{width:28,height:28,borderRadius:6,border:`1.5px solid ${editingRoutine.emoji===e?"#1a1a1a":border}`,background:"transparent",cursor:"pointer",fontSize:14}}>{e}</button>)}
+              </div>
+              <input value={editingRoutine.name} onChange={e=>updateRoutine(editingRoutine.id,{name:e.target.value})} style={{flex:1,minWidth:120,padding:"5px 8px",border:`0.5px solid ${border}`,borderRadius:6,fontSize:13,background:dm?"#2a2440":"#fff",color:text}}/>
+              <div style={{display:"flex",gap:4}}>
+                {COLORS.map(c=><button key={c} onClick={()=>updateRoutine(editingRoutine.id,{color:c})} style={{width:20,height:20,borderRadius:"50%",background:c,border:`2px solid ${editingRoutine.color===c?"#1a1a1a":"transparent"}`,cursor:"pointer"}}/>)}
+              </div>
+            </div>
+            {/* Steps */}
+            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:"28vh",overflowY:"auto",marginBottom:10}}>
+              {editingRoutine.steps.map((s,si)=>(
+                <div key={s.id} style={{display:"flex",gap:6,alignItems:"center",padding:"7px 10px",borderRadius:7,background:s.type==="task_slot"?(dm?"rgba(168,218,255,.15)":"#EBF3FB"):(dm?"rgba(255,255,255,.04)":"#f7f6f3"),border:`0.5px solid ${s.type==="task_slot"?"#A8DAFF66":border}`}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    <button onClick={()=>moveStep(editingRoutine.id,si,-1)} style={{fontSize:9,color:sub,background:"none",border:"none",cursor:"pointer",lineHeight:1}}>▲</button>
+                    <button onClick={()=>moveStep(editingRoutine.id,si,1)} style={{fontSize:9,color:sub,background:"none",border:"none",cursor:"pointer",lineHeight:1}}>▼</button>
+                  </div>
+                  <span style={{fontSize:12,color:s.type==="task_slot"?"#185FA5":sub,flexShrink:0}}>{s.type==="task_slot"?"🎯":"⚙️"}</span>
+                  <input value={s.type==="task_slot"?(s.label||"深度专注"):s.title} onChange={e=>updateStep(editingRoutine.id,s.id,s.type==="task_slot"?{label:e.target.value}:{title:e.target.value})} style={{flex:1,minWidth:60,fontSize:12,border:`0.5px solid ${border}`,borderRadius:4,padding:"3px 6px",background:dm?"#2a2440":"#fff",color:text}}/>
+                  <input type="number" value={s.duration} onChange={e=>updateStep(editingRoutine.id,s.id,{duration:parseInt(e.target.value)||5})} style={{width:46,fontSize:12,border:`0.5px solid ${border}`,borderRadius:4,padding:"3px 5px",background:dm?"#2a2440":"#fff",color:text}} min={1} max={180}/>
+                  <span style={{fontSize:11,color:sub,flexShrink:0}}>分钟</span>
+                  {s.type==="fixed"&&<input value={s.note||""} onChange={e=>updateStep(editingRoutine.id,s.id,{note:e.target.value})} placeholder="提示（可选）" style={{flex:1.2,minWidth:60,fontSize:11,border:`0.5px solid ${border}`,borderRadius:4,padding:"3px 6px",color:sub,background:dm?"#2a2440":"#fff"}}/>}
+                  <button onClick={()=>removeStep(editingRoutine.id,s.id)} style={{fontSize:11,color:"#bbb",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+            {/* Add step buttons */}
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <input value={newStepTitle} onChange={e=>setNewStepTitle(e.target.value)} placeholder="步骤名称…" onKeyDown={e=>e.key==="Enter"&&newStepTitle.trim()&&addStep(editingRoutine.id,"fixed")}
+                style={{flex:1,padding:"6px 8px",border:`0.5px solid ${border}`,borderRadius:6,fontSize:12,background:dm?"#2a2440":"#fff",color:text}}/>
+              <button onClick={()=>newStepTitle.trim()&&addStep(editingRoutine.id,"fixed")} style={{padding:"6px 10px",background:dm?"rgba(255,255,255,.1)":"#f0ede8",border:`0.5px solid ${border}`,borderRadius:6,fontSize:12,color:text,cursor:"pointer"}}>⚙️固定步骤</button>
+              <button onClick={()=>addStep(editingRoutine.id,"task_slot")} style={{padding:"6px 10px",background:"#EBF3FB",border:"0.5px solid #A8DAFF",borderRadius:6,fontSize:12,color:"#185FA5",cursor:"pointer"}}>🎯任务槽</button>
+            </div>
+          </div>
+        )}
+        <div style={{padding:"12px 20px",borderTop:`0.5px solid ${border}`}}>
+          <button onClick={onClose} style={{width:"100%",padding:"10px",background:dm?"rgba(255,255,255,.1)":"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:500,cursor:"pointer"}}>完成</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Routine Selector ──
+function RoutineSelector({tasks,onStart,onClose,darkMode}){
+  const routines=loadRoutines();
+  const todayTasks=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today")).slice(0,4);
+  const dm=darkMode;
+  const bg=dm?"#1a1728":"#fff";
+  const border=dm?"rgba(255,255,255,.1)":"#e0ddd6";
+  const text=dm?"#f0eaff":"#1a1a1a";
+  const sub=dm?"rgba(255,255,255,.4)":"#888";
+
+  return(
+    <div style={{position:"fixed",inset:0,background:dm?"rgba(0,0,0,.7)":"rgba(0,0,0,.45)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:bg,borderRadius:16,width:"100%",maxWidth:480,boxShadow:"0 16px 56px rgba(0,0,0,.25)"}} className="fade-in">
+        <div style={{padding:"20px 20px 14px",borderBottom:`0.5px solid ${border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:15,fontWeight:600,color:text}}>选择今天的流程</div>
+          <button onClick={onClose} style={{fontSize:18,color:sub,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+
+        {todayTasks.length>0&&(
+          <div style={{padding:"10px 20px",background:dm?"rgba(168,218,255,.08)":"#EBF3FB",borderBottom:`0.5px solid ${border}`}}>
+            <div style={{fontSize:11,color:"#185FA5",marginBottom:6,fontWeight:500}}>今日任务（将自动填入任务槽）</div>
+            {todayTasks.map((t,i)=>(
+              <div key={t.id} style={{fontSize:12,color:dm?"rgba(168,218,255,.8)":"#185FA5",padding:"2px 0"}}>
+                {i+1}. {t.title.length>30?t.title.slice(0,30)+"…":t.title}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:10}}>
+          {routines.map(r=>{
+            const slots=r.steps.filter(s=>s.type==="task_slot");
+            const totalMins=r.steps.reduce((a,s)=>a+(s.duration||0),0);
+            return(
+              <div key={r.id} onClick={()=>onStart(r)} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 16px",borderRadius:12,border:`2px solid ${border}`,cursor:"pointer",transition:"all .15s",background:dm?"rgba(255,255,255,.03)":"#fafaf8"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=r.color;e.currentTarget.style.background=r.color+(dm?"22":"18");}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=border;e.currentTarget.style.background=dm?"rgba(255,255,255,.03)":"#fafaf8";}}>
+                <div style={{width:44,height:44,borderRadius:"50%",background:r.color+"33",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{r.emoji}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:600,color:text,marginBottom:3}}>{r.name}</div>
+                  <div style={{fontSize:11,color:sub}}>
+                    {totalMins}分钟 · {r.steps.length}个步骤
+                    {slots.length>0&&<span style={{color:"#185FA5"}}> · {slots.length}个任务槽</span>}
+                  </div>
+                </div>
+                <span style={{fontSize:18,color:r.color}}>▶</span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{padding:"12px 20px 16px",borderTop:`0.5px solid ${border}`}}>
+          <div style={{fontSize:12,color:sub,textAlign:"center"}}>没有合适的流程？去侧边栏"▶ Routine管理"自定义</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Routine Fullscreen Executor ──
+function RoutineExecutor({routine,tasks,onComplete,onExit,onTaskDone,darkMode}){
+  const dm=darkMode;
+
+  // Bind task slots to actual tasks
+  const todayTasks=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"));
+  const resolvedSteps=routine.steps.map(s=>{
+    if(s.type!=="task_slot")return{...s,resolved:null};
+    const task=todayTasks[s.taskIndex]||null;
+    return{...s,resolved:task};
+  });
+
+  const [stepIdx,setStepIdx]=useState(0);
+  const [secsLeft,setSecsLeft]=useState((resolvedSteps[0]?.duration||5)*60);
+  const [paused,setPaused]=useState(false);
+  const [done,setDone]=useState(false);
+  const [showExit,setShowExit]=useState(false);
+  const [completedTaskIds,setCompletedTaskIds]=useState([]);
+  const [showCheckIn,setShowCheckIn]=useState(null);
+  const [catState,setCatState]=useState("idle");
+  const [stepKey,setStepKey]=useState(0); // for animation reset
+
+  const cur=resolvedSteps[stepIdx];
+  const totalSecs=resolvedSteps.reduce((a,s)=>a+(s.duration||0)*60,0);
+  const doneSecs=resolvedSteps.slice(0,stepIdx).reduce((a,s)=>a+(s.duration||0)*60,0)+(resolvedSteps[stepIdx]?.duration||0)*60-secsLeft;
+  const progress=totalSecs>0?doneSecs/totalSecs:0;
+
+  // Countdown
+  useEffect(()=>{
+    if(paused||done)return;
+    if(secsLeft<=0){advanceStep();return;}
+    const t=setInterval(()=>{
+      setSecsLeft(s=>{
+        if(s<=1){clearInterval(t);advanceStep();return 0;}
+        if(s<=4)SoundEngine.countdownBeep();
+        return s-1;
+      });
+    },1000);
+    return()=>clearInterval(t);
+  },[stepIdx,paused,done]);
+
+  function advanceStep(){
+    SoundEngine.stepDone();
+    setCatState("celebrate");
+    setTimeout(()=>setCatState("walk"),800);
+    // If current step is a task slot with resolved task, mark done
+    if(cur?.type==="task_slot"&&cur?.resolved){
+      const taskId=cur.resolved.id;
+      setCompletedTaskIds(ids=>[...ids,taskId]);
+      if(cur.resolved.title.startsWith("[Day ")&&cur.resolved.notes?.includes("📌 今日微任务")){
+        setShowCheckIn(cur.resolved);
+        return; // pause until check-in done
+      }
+      onTaskDone(taskId);
+    }
+    goNext();
+  }
+
+  function goNext(){
+    const ni=stepIdx+1;
+    if(ni>=resolvedSteps.length){
+      setDone(true);
+      SoundEngine.routineDone();
+      setCatState("celebrate");
+      return;
+    }
+    setStepIdx(ni);
+    setSecsLeft((resolvedSteps[ni]?.duration||5)*60);
+    setStepKey(k=>k+1);
+    setCatState("walk");
+    setTimeout(()=>{SoundEngine.stepStart();setCatState("idle");},400);
+  }
+
+  function addTime(mins){setSecsLeft(s=>s+mins*60);}
+  function skip(){setCatState("walk");setTimeout(goNext,200);}
+
+  // Colors
+  const accentColors=["#FFB3C6","#A8DAFF","#D4B8FF","#B8F0D8","#FFCBA4","#FFF0A0"];
+  const stepColor=accentColors[stepIdx%accentColors.length];
+  const bgLight="linear-gradient(135deg,#FFF5FA 0%,#F0F8FF 50%,#F5FFF5 100%)";
+  const bgDark="linear-gradient(135deg,#1a0a2e 0%,#0d1a3a 50%,#0a2e1a 100%)";
+  const textMain=dm?"#f0eaff":"#1a1a1a";
+  const textSub=dm?"rgba(240,234,255,.5)":"rgba(0,0,0,.38)";
+
+  const mm=String(Math.floor(secsLeft/60)).padStart(2,"0");
+  const ss=String(secsLeft%60).padStart(2,"0");
+
+  if(done) return(
+    <div className={`routine-fs ${dm?"dark":"light"}`} style={{background:dm?bgDark:bgLight}}>
+      <div style={{textAlign:"center",padding:32,maxWidth:400}}>
+        <div style={{marginBottom:20,display:"flex",justifyContent:"center"}}>
+          <PixelCat state="celebrate" size={5}/>
+        </div>
+        <div style={{fontSize:28,fontWeight:700,color:textMain,marginBottom:8}}>完成啦！🎉</div>
+        <div style={{fontSize:14,color:textSub,marginBottom:24,lineHeight:1.8}}>
+          {routine.name} 全部跑完<br/>
+          {completedTaskIds.length>0&&`${completedTaskIds.length}个任务已打勾 ✓`}
+        </div>
+        <button onClick={onComplete} style={{width:"100%",padding:"14px",background:stepColor,color:"#1a1a1a",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer"}}>
+          返回专注板
+        </button>
+      </div>
+    </div>
+  );
+
+  return(
+    <div className={`routine-fs ${dm?"dark":"light"}`} style={{background:dm?bgDark:bgLight}}>
+      {/* Exit confirm */}
+      {showExit&&(
+        <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,.5)",zIndex:10,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:dm?"#1a1728":"#fff",borderRadius:14,padding:"24px",textAlign:"center",maxWidth:280}}>
+            <div style={{fontSize:15,fontWeight:600,color:textMain,marginBottom:8}}>退出当前流程？</div>
+            <div style={{fontSize:13,color:textSub,marginBottom:20}}>已完成的任务会保留，未完成的不会变化</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setShowExit(false)} style={{flex:1,padding:"9px",border:"0.5px solid #ccc",borderRadius:8,background:"transparent",color:textMain,cursor:"pointer"}}>继续</button>
+              <button onClick={onExit} style={{flex:1,padding:"9px",background:"#A32D2D",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>退出</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CheckIn overlay for block tasks */}
+      {showCheckIn&&(
+        <div style={{position:"absolute",inset:0,zIndex:10,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)"}}>
+          <div style={{background:dm?"#1a1728":"#fff",borderRadius:14,padding:"24px",maxWidth:400,width:"100%",margin:"0 16px"}}>
+            <div style={{fontSize:14,fontWeight:600,color:textMain,marginBottom:12}}>📤 完成打卡</div>
+            <div style={{fontSize:13,color:textSub,marginBottom:16}}>{showCheckIn.title}</div>
+            <textarea rows={3} placeholder="简单描述今天做了什么…"
+              style={{width:"100%",padding:"8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,background:dm?"#2a2440":"#fff",color:textMain,marginBottom:12}}
+              id="routine-checkin-text"/>
+            <button onClick={()=>{
+              const txt=document.getElementById("routine-checkin-text")?.value||"";
+              onTaskDone(showCheckIn.id,{checkInOutput:txt,checkInDate:todayStr(),done:true});
+              setShowCheckIn(null);goNext();
+            }} style={{width:"100%",padding:"10px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>
+              ✓ 打卡完成，下一步
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Top progress bar */}
+      <div style={{position:"absolute",top:0,left:0,right:0,height:4,background:dm?"rgba(255,255,255,.08)":"rgba(0,0,0,.06)"}}>
+        <div style={{height:"100%",width:`${progress*100}%`,background:`linear-gradient(90deg,${stepColor},${accentColors[(stepIdx+1)%accentColors.length]})`,transition:"width .8s ease",boxShadow:`0 0 8px ${stepColor}`}}/>
+      </div>
+
+      {/* Top right exit */}
+      <button onClick={()=>setShowExit(true)} style={{position:"absolute",top:14,right:16,fontSize:12,color:textSub,background:"none",border:`0.5px solid ${dm?"rgba(255,255,255,.15)":"rgba(0,0,0,.12)"}`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✕ 退出</button>
+
+      {/* Step counter */}
+      <div style={{position:"absolute",top:16,left:20,fontSize:12,color:textSub}}>{stepIdx+1} / {resolvedSteps.length}</div>
+
+      {/* Main content */}
+      <div key={stepKey} style={{textAlign:"center",padding:"0 24px",maxWidth:480,width:"100%",animation:"step-enter .35s ease"}}>
+
+        {/* Next step preview */}
+        {stepIdx>0&&(
+          <div style={{fontSize:11,color:textSub,marginBottom:8,letterSpacing:".08em",textTransform:"uppercase"}}>当前</div>
+        )}
+
+        {/* Cat companion */}
+        <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+          <PixelCat state={catState} size={4}/>
+        </div>
+
+        {/* Step type badge */}
+        <div style={{display:"inline-block",padding:"3px 12px",borderRadius:20,background:cur?.type==="task_slot"?"rgba(168,218,255,.25)":stepColor+"33",marginBottom:12}}>
+          <span style={{fontSize:12,color:cur?.type==="task_slot"?"#A8DAFF":stepColor,fontWeight:600,letterSpacing:".04em"}}>
+            {cur?.type==="task_slot"?"🎯 任务时间":"⚙️ "+( cur?.title||"")}
+          </span>
+        </div>
+
+        {/* Title */}
+        <div style={{fontSize:cur?.type==="task_slot"?22:18,fontWeight:700,color:textMain,marginBottom:cur?.type==="task_slot"?8:16,lineHeight:1.3}}>
+          {cur?.type==="task_slot"
+            ?(cur?.resolved?.title||cur?.label||"自由专注")
+            :cur?.title}
+        </div>
+
+        {/* Task detail for task slots */}
+        {cur?.type==="task_slot"&&cur?.resolved?.notes&&(()=>{
+          const micro=cur.resolved.notes.match(/📌 今日微任务：(.+)/)?.[1];
+          return micro?(
+            <div style={{fontSize:13,color:textSub,marginBottom:16,padding:"8px 16px",background:dm?"rgba(255,255,255,.06)":"rgba(0,0,0,.04)",borderRadius:8,lineHeight:1.6}}>
+              {micro}
+            </div>
+          ):null;
+        })()}
+
+        {/* Note for fixed steps */}
+        {cur?.type==="fixed"&&cur?.note&&(
+          <div style={{fontSize:13,color:textSub,marginBottom:16,lineHeight:1.6}}>{cur.note}</div>
+        )}
+
+        {/* Timer ring */}
+        <div style={{position:"relative",width:160,height:160,margin:"0 auto 24px",borderRadius:"50%",
+          background:dm?`conic-gradient(${stepColor} ${(1-secsLeft/((cur?.duration||5)*60))*360}deg, rgba(255,255,255,.06) 0deg)`
+            :`conic-gradient(${stepColor} ${(1-secsLeft/((cur?.duration||5)*60))*360}deg, rgba(0,0,0,.06) 0deg)`,
+          animation:secsLeft<=5?"ring-pulse"+(dm?"-dark":"")+" 1s infinite":"none",
+          boxShadow:`0 0 ${secsLeft<=10?20:8}px ${stepColor}66`}}>
+          <div style={{position:"absolute",inset:12,borderRadius:"50%",background:dm?"#1a1728":bgLight.split(",")[0].replace("linear-gradient(135deg,",""),
+            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontSize:36,fontWeight:700,color:textMain,fontVariantNumeric:"tabular-nums",letterSpacing:"-.02em"}}>{mm}:{ss}</div>
+            <div style={{fontSize:11,color:textSub,marginTop:2}}>{cur?.duration}分钟</div>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div style={{display:"flex",gap:10,justifyContent:"center",alignItems:"center"}}>
+          <button onClick={()=>addTime(5)} style={{padding:"8px 14px",background:dm?"rgba(255,255,255,.08)":"rgba(0,0,0,.06)",border:"none",borderRadius:9,fontSize:13,color:textSub,cursor:"pointer"}}>+5分</button>
+          <button onClick={()=>setPaused(p=>!p)} style={{padding:"10px 24px",background:dm?"rgba(255,255,255,.12)":"rgba(0,0,0,.08)",border:"none",borderRadius:9,fontSize:14,color:textMain,cursor:"pointer",fontWeight:500}}>
+            {paused?"▶ 继续":"⏸ 暂停"}
+          </button>
+          <button onClick={skip} style={{padding:"8px 14px",background:dm?"rgba(255,255,255,.08)":"rgba(0,0,0,.06)",border:"none",borderRadius:9,fontSize:13,color:textSub,cursor:"pointer"}}>跳过</button>
+          <button onClick={advanceStep} style={{padding:"10px 20px",background:stepColor,border:"none",borderRadius:9,fontSize:14,color:"#1a1a1a",cursor:"pointer",fontWeight:600,boxShadow:`0 4px 16px ${stepColor}88`}}>
+            完成 ✓
+          </button>
+        </div>
+
+        {/* Next step preview */}
+        {stepIdx<resolvedSteps.length-1&&(
+          <div style={{marginTop:24,fontSize:12,color:textSub}}>
+            下一步：{resolvedSteps[stepIdx+1]?.type==="task_slot"
+              ?(resolvedSteps[stepIdx+1]?.resolved?.title||resolvedSteps[stepIdx+1]?.label||"任务时间")
+              :resolvedSteps[stepIdx+1]?.title}
+            <span style={{marginLeft:6,opacity:.6}}>{resolvedSteps[stepIdx+1]?.duration}分钟</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [darkMode,setDarkMode]=useState(()=>lsGet("zj_dark_mode",false));
+  const [showRoutineSelector,setShowRoutineSelector]=useState(false);
+  const [showRoutineManager,setShowRoutineManager]=useState(false);
+  const [activeRoutine,setActiveRoutine]=useState(null); // routine being executed
   const [showLaunch,setShowLaunch]=useState(()=>{
     const k="launch_"+todayStr();
     if(lsGet(k))return false;
@@ -3516,6 +4213,15 @@ function App(){
     setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,...checkInData}:t));
     setCheckInTask(null);
   }
+  // Dark mode body class
+  useEffect(()=>{
+    document.body.classList.toggle("dark-mode",darkMode);
+    lsSet("zj_dark_mode",darkMode);
+  },[darkMode]);
+  // Routine task done handler
+  function routineTaskDone(taskId,extra={}){
+    setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,done:true,...extra}:t));
+  }
 
   function handleMigrate(decisions){
     setTasksAndSync(ts=>ts.map(t=>{
@@ -3542,7 +4248,7 @@ function App(){
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask};
   const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"weekly",l:"本周计划",i:"📆"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"},{id:"blocking",l:"全局框架",i:"🏗"}];
 
-  return<div style={{display:"flex",height:"100vh",background:"#f7f6f3",fontSize:14,overflow:"hidden"}}>
+  return<div style={{display:"flex",height:"100vh",background:darkMode?"#1a1728":"#f7f6f3",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
     {!sidebarOpen&&<button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{position:"fixed",top:12,left:12,zIndex:200,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"7px 10px",fontSize:18,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>☰</button>}
     {/* sidebar overlay for mobile */}
@@ -3551,7 +4257,8 @@ function App(){
     <div className={`sidebar-desktop ${sidebarOpen?"sidebar-mobile-open":""}`} style={{width:190,background:"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto",position:"relative",zIndex:50}}>
       <div style={{padding:"0 16px 16px",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span>🧠 专注板</span>
-        <div style={{display:"flex",gap:6}}>
+        <div style={{display:"flex",gap:4}}>
+          <button onClick={()=>setDarkMode(d=>!d)} title={darkMode?"浅色模式":"深色模式"} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:darkMode?"#D4B8FF":"#aaa"}}>{darkMode?"☀️":"🌙"}</button>
           <button onClick={()=>setShowSettings(true)} title="同步设置" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:ghToken?"#0F6E56":"#bbb"}}>{ghToken?"☁️":"⚙️"}</button>
           <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#aaa"}}>✕</button>
         </div>
@@ -3564,6 +4271,9 @@ function App(){
       <div style={{flex:1}}/>
       <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
         <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
+        {/* Routine buttons */}
+        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:darkMode?"#D4B8FF":"#533AB7",cursor:"pointer",fontWeight:500,background:darkMode?"rgba(212,184,255,.08)":"rgba(83,58,183,.05)"}}>▶ 开始 Routine</div>
+        <div onClick={()=>{setShowRoutineManager(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>⚙ Routine管理</div>
         {(()=>{
           const today=todayStr();
           const dueCount=courses.reduce((sum,c)=>{
@@ -3638,6 +4348,17 @@ function App(){
               })}
             </div>;
           })()}
+          {/* Status Cat */}
+          <StatusCat tasks={tasks} darkMode={darkMode}/>
+          {/* Routine quick start */}
+          <button onClick={()=>setShowRoutineSelector(true)} style={{width:"100%",padding:"11px 16px",marginBottom:14,background:darkMode?"linear-gradient(135deg,rgba(212,184,255,.2),rgba(168,218,255,.2))":"linear-gradient(135deg,#F5F0FF,#EBF5FF)",border:`1.5px solid ${darkMode?"rgba(212,184,255,.3)":"#D4B8FF"}`,borderRadius:10,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+            <span style={{fontSize:18}}>▶</span>
+            <div style={{flex:1,textAlign:"left"}}>
+              <div style={{fontSize:13,fontWeight:600,color:darkMode?"#D4B8FF":"#533AB7"}}>开始 Routine</div>
+              <div style={{fontSize:11,color:darkMode?"rgba(212,184,255,.6)":"#9B89C4",marginTop:1}}>进入专注流程，任务自动联动</div>
+            </div>
+            <span style={{fontSize:12,color:darkMode?"rgba(212,184,255,.5)":"#bbb"}}>→</span>
+          </button>
           {/* Energy level indicator */}
           {(()=>{const e=getEnergyLabel();return(
             <div style={{background:e.bg,border:"0.5px solid "+e.color+"44",borderRadius:8,padding:"8px 14px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -3710,6 +4431,9 @@ function App(){
     {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);ghTokenRef.current=t;gistIdRef.current=id;isFirstLoad.current=false;setTimeout(loadFromGist,100);}}/>}
     {showBlockBreaker&&<BlockBreaker tasks={tasks} onAddTask={addTask} onUpdateTask={saveDetail} geminiKey={geminiKey} onClose={()=>setShowBlockBreaker(false)}/>}
     {checkInTask&&<DailyCheckIn task={checkInTask} onSave={saveCheckIn} onClose={()=>setCheckInTask(null)}/>}
+    {showRoutineSelector&&!activeRoutine&&<RoutineSelector tasks={tasks} darkMode={darkMode} onStart={r=>{setActiveRoutine(r);setShowRoutineSelector(false);SoundEngine.stepStart();}} onClose={()=>setShowRoutineSelector(false)}/>}
+    {showRoutineManager&&<RoutineManager onClose={()=>setShowRoutineManager(false)} darkMode={darkMode}/>}
+    {activeRoutine&&<RoutineExecutor routine={activeRoutine} tasks={tasks} darkMode={darkMode} onTaskDone={(id,extra)=>routineTaskDone(id,extra)} onComplete={()=>setActiveRoutine(null)} onExit={()=>setActiveRoutine(null)}/>}
 
     {showAdd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{background:"#fff",borderRadius:12,padding:24,width:400,boxShadow:"0 8px 40px rgba(0,0,0,.15)"}} className="fade-in">
