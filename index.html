@@ -213,7 +213,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen}){
    TASK DETAIL MODAL
 ═══════════════════════════════════════════ */
 function TaskDetail({task,onClose,onSave,onDelete}){
-  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone]});
+  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone],estimate:task.estimate||""});
   const [ns,setNs]=useState("");
   const fRef=useRef();
   function up(k,v){setF(x=>({...x,[k]:v}));}
@@ -232,6 +232,7 @@ function TaskDetail({task,onClose,onSave,onDelete}){
             ["优先级",<select value={f.priority} onChange={e=>up("priority",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}><option value="urgent">🔴 紧急</option><option value="today">🟡 今天</option><option value="normal">⚪ 普通</option></select>],
             ["开始日期",<input type="date" value={f.startDate} onChange={e=>up("startDate",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
             ["截止日期",<input type="date" value={f.due} onChange={e=>up("due",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+            ["预计时间",<TimeEstimateSelect value={f.estimate||""} onChange={v=>up("estimate",v)}/>],
           ].map(([l,el])=><div key={l}><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>{l}</div>{el}</div>)}
         </div>
         <div><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>备注</div>
@@ -647,6 +648,81 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
 /* ═══════════════════════════════════════════
    AI PANEL (Gemini)
 ═══════════════════════════════════════════ */
+// ── Markdown Renderer ──
+function renderMarkdown(text){
+  if(!text)return null;
+  const lines=text.split("\n");
+  const elements=[];
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    // Blank line
+    if(!line.trim()){elements.push(React.createElement("div",{key:i,style:{height:6}}));i++;continue;}
+    // HR
+    if(/^---+$/.test(line.trim())){elements.push(React.createElement("hr",{key:i,style:{border:"none",borderTop:"0.5px solid #e0ddd6",margin:"8px 0"}}));i++;continue;}
+    // H1/H2/H3
+    const h3=line.match(/^###\s+(.*)/);
+    const h2=line.match(/^##\s+(.*)/);
+    const h1=line.match(/^#\s+(.*)/);
+    if(h1||h2||h3){
+      const txt=(h1||h2||h3)[1];
+      const sz=h1?15:h2?14:13;
+      elements.push(React.createElement("div",{key:i,style:{fontSize:sz,fontWeight:600,margin:"10px 0 4px",color:"#1a1a1a"}},inlineMarkdown(txt)));
+      i++;continue;
+    }
+    // Bullet list (*, -, •)
+    if(/^[\s]*[*\-•]\s/.test(line)){
+      const items=[];
+      while(i<lines.length&&/^[\s]*[*\-•]\s/.test(lines[i])){
+        const indent=(lines[i].match(/^(\s*)/)||["",""])[1].length;
+        const txt=lines[i].replace(/^[\s]*[*\-•]\s/,"");
+        items.push(React.createElement("div",{key:i,style:{display:"flex",gap:6,paddingLeft:indent>0?16:0,marginBottom:2}},
+          React.createElement("span",{style:{color:"#888",flexShrink:0,marginTop:1}},"·"),
+          React.createElement("span",{style:{flex:1}},inlineMarkdown(txt))
+        ));
+        i++;
+      }
+      elements.push(React.createElement("div",{key:"ul"+i,style:{fontSize:13,lineHeight:1.6,color:"#1a1a1a",marginBottom:4}},items));
+      continue;
+    }
+    // Numbered list
+    if(/^[\s]*\d+[.)]\s/.test(line)){
+      const items=[];
+      let num=1;
+      while(i<lines.length&&/^[\s]*\d+[.)]\s/.test(lines[i])){
+        const txt=lines[i].replace(/^[\s]*\d+[.)]\s/,"");
+        items.push(React.createElement("div",{key:i,style:{display:"flex",gap:8,marginBottom:2}},
+          React.createElement("span",{style:{color:"#888",flexShrink:0,minWidth:16,textAlign:"right"}},(num++)+"."),
+          React.createElement("span",{style:{flex:1}},inlineMarkdown(txt))
+        ));
+        i++;
+      }
+      elements.push(React.createElement("div",{key:"ol"+i,style:{fontSize:13,lineHeight:1.6,color:"#1a1a1a",marginBottom:4}},items));
+      continue;
+    }
+    // Normal paragraph
+    elements.push(React.createElement("div",{key:i,style:{fontSize:13,lineHeight:1.7,color:"#1a1a1a",marginBottom:3}},inlineMarkdown(line)));
+    i++;
+  }
+  return elements;
+}
+
+function inlineMarkdown(text){
+  // Parse **bold**, *italic*, `code` inline
+  const parts=[];
+  const re=/(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`)/g;
+  let last=0,m;
+  while((m=re.exec(text))!==null){
+    if(m.index>last)parts.push(text.slice(last,m.index));
+    if(m[2])parts.push(React.createElement("strong",{key:m.index,style:{fontWeight:600}},m[2]));
+    else if(m[3])parts.push(React.createElement("em",{key:m.index,style:{fontStyle:"italic"}},m[3]));
+    else if(m[4])parts.push(React.createElement("code",{key:m.index,style:{fontFamily:"monospace",background:"#f0ede8",padding:"1px 4px",borderRadius:3,fontSize:12}},m[4]));
+    last=m.index+m[0].length;
+  }
+  if(last<text.length)parts.push(text.slice(last));
+  return parts.length===1&&typeof parts[0]==="string"?parts[0]:parts;
+}
+
 function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask}){
   const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 分析图片内容\n• 直接生成任务加入专注板\n\n有什么需要帮忙的？",images:[]}]);
   const [input,setInput]=useState("");
@@ -815,10 +891,13 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
   async function extractTasks(msgIndex,text){
     if(!apiKey)return;
     setExtracting(msgIndex);
-    const prompt="从以下内容中提取所有具体的任务或学习计划条目，返回JSON数组。\n"
-      +"每个条目格式：{\"title\":\"任务标题\",\"priority\":\"today|normal|urgent\",\"due\":\"\"}\n"
-      +"title要具体，包含关键信息（如章节名、页码）。最多提取15个。\n"
-      +"只返回JSON数组，不要其他内容。\n\n"
+    const prompt="从以下学习计划或任务列表中提取任务，按天或阶段组织，返回JSON数组。\n"
+      +"规则：\n"
+      +"1. 每个任务对应一天或一个阶段（如'第一天''Day 1''第一阶段'），不要把每个小点拆成单独任务\n"
+      +"2. 该天/阶段下的具体内容放入subtasks数组（每项是字符串）\n"
+      +"3. 如果内容不是按天/阶段组织的，则按主题归并，最多10个任务\n"
+      +"4. 每个条目格式：{\"title\":\"任务标题（如：Day 1 基础与光源）\",\"priority\":\"normal\",\"due\":\"\",\"subtasks\":[\"子步骤1\",\"子步骤2\"]}\n"
+      +"5. 只返回JSON数组，不要其他内容\n\n"
       +"内容：\n"+text;
     try{
       const reply=await callGemini(apiKey,[{parts:[{text:prompt}]}]);
@@ -827,7 +906,14 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
       if(Array.isArray(parsed)&&parsed.length>0){
         setTaskPreview({
           msgIndex,
-          tasks:parsed.map(t=>({title:t.title||"",priority:t.priority||"normal",due:t.due||"",project:2})),
+          tasks:parsed.map(t=>({
+            title:t.title||"",
+            priority:t.priority||"normal",
+            due:t.due||"",
+            project:2,
+            subtasks:Array.isArray(t.subtasks)?t.subtasks:[],
+            subtaskDone:Array.isArray(t.subtasks)?t.subtasks.map(()=>false):[],
+          })),
           selected:parsed.map(()=>true)
         });
       }
@@ -854,7 +940,14 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
     setMsgs(m=>[...m,{role:"user",text:msg,images:imgs.map(p=>p.preview)}]);
     setLoading(true);
     const ctx=tasks.filter(t=>!t.done).map(t=>"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）").join("\n");
-    const sys="你是这个专注板应用的内置助手。用户的当前任务列表：\n"+ctx+"\n\n直接回答，不需要开场白。";
+    const sys="你是一个思考深入的学习规划师和效率助手。\n\n"+
+    "用户当前任务：\n"+ctx+"\n\n"+
+    "回答原则：\n"+
+    "- 真正分析内容，不要逐条复述原文\n"+
+    "- 做学习规划时：按天/阶段组织，说明每天的学习重点和逻辑，而不是罗列所有子标题\n"+
+    "- 任务拆解时：以天或阶段为单位，把具体内容作为子步骤，不要每个小点都变成独立任务\n"+
+    "- 给出真实的判断和建议，比如哪些章节更重要、哪些可以快速过\n"+
+    "- 直接回答，不用开场白";
     const parts=[{text:sys+"\n\n用户："+msg}];
     imgs.forEach(p=>parts.push({inline_data:{mime_type:p.type,data:p.data}}));
     try{
@@ -906,8 +999,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
             )}
             {m.text&&(
               <div style={{background:m.role==="ai"?"#f7f6f3":"transparent",borderRadius:8,overflow:"hidden"}}>
-                <div style={{fontSize:13,lineHeight:1.65,padding:m.role==="ai"?"10px 12px":"0",color:m.role==="ai"?"#1a1a1a":"#555",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal",whiteSpace:"pre-wrap"}}>
-                  {m.text}
+                <div style={{fontSize:13,lineHeight:1.65,padding:m.role==="ai"?"10px 12px":"0",color:m.role==="ai"?"#1a1a1a":"#555",textAlign:m.role==="user"?"right":"left",fontStyle:m.role==="user"?"italic":"normal"}}>
+                  {m.role==="ai"?renderMarkdown(m.text):m.text}
                 </div>
                 {m.role==="ai"&&hasTaskContent(m.text)&&taskPreview?.msgIndex!==i&&(
                   <div style={{padding:"6px 12px 10px",borderTop:"0.5px solid #e8e5e0"}}>
@@ -928,8 +1021,16 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
                         <label key={ti} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 6px",borderRadius:5,background:taskPreview.selected[ti]?"#f0f7ff":"#fafafa",cursor:"pointer"}}>
                           <input type="checkbox" checked={taskPreview.selected[ti]} onChange={()=>setTaskPreview(p=>({...p,selected:p.selected.map((s,j)=>j===ti?!s:s)}))} style={{marginTop:2,flexShrink:0}}/>
                           <div style={{flex:1}}>
-                            <div style={{fontSize:12,color:"#1a1a1a",lineHeight:1.4}}>{t.title}</div>
-                            <div style={{fontSize:11,color:"#aaa",marginTop:1}}>
+                            <div style={{fontSize:12,color:"#1a1a1a",lineHeight:1.4,fontWeight:500}}>{t.title}</div>
+                            {t.subtasks&&t.subtasks.length>0&&(
+                              <div style={{fontSize:11,color:"#666",marginTop:3,lineHeight:1.5}}>
+                                {t.subtasks.slice(0,3).map((s,si)=>(
+                                  <div key={si} style={{paddingLeft:8}}>· {s}</div>
+                                ))}
+                                {t.subtasks.length>3&&<div style={{paddingLeft:8,color:"#aaa"}}>+{t.subtasks.length-3}个步骤</div>}
+                              </div>
+                            )}
+                            <div style={{fontSize:11,color:"#aaa",marginTop:2}}>
                               {PROJECTS.find(p=>p.id===t.project)?.name}
                               {t.due&&<span style={{marginLeft:6}}>📅{t.due}</span>}
                             </div>
@@ -1139,40 +1240,178 @@ function LearningHeatmap({courses}){
 function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
   const [minutes,setMinutes]=useState(0);
   const [noteText,setNoteText]=useState("");
-  const [saving,setSaving]=useState(false);
   const [done,setDone]=useState(false);
+  const [bgUrl,setBgUrl]=useState("");
+  const [bgLoading,setBgLoading]=useState(true);
+  // Pomodoro
+  const MODES={work:{label:"专注",mins:25,color:"#e05c4b"},shortBreak:{label:"短休息",mins:5,color:"#4b9e8a"},longBreak:{label:"长休息",mins:15,color:"#4b6dbf"}};
+  const [pomMode,setPomMode]=useState("work");
+  const [pomSecs,setPomSecs]=useState(MODES.work.mins*60);
+  const [pomRunning,setPomRunning]=useState(false);
+  const [pomCount,setPomCount]=useState(0);
+  const timerRef=useRef(null);
+  const studyTimer=useRef(null);
+
+  // Bing wallpaper
   useEffect(()=>{
-    const t=setInterval(()=>setMinutes(m=>m+1),60000);
-    return()=>clearInterval(t);
+    setBgLoading(true);
+    // Use a Bing random wallpaper via their API
+    const urls=[
+      "https://bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN",
+    ];
+    fetch("https://bing.com/HPImageArchive.aspx?format=js&idx="+Math.floor(Math.random()*7)+"&n=1&mkt=zh-CN")
+      .then(r=>r.json())
+      .then(data=>{
+        const path=data?.images?.[0]?.url;
+        if(path){
+          setBgUrl("https://bing.com"+path);
+        } else {
+          // fallback gradient
+          setBgUrl("");
+        }
+        setBgLoading(false);
+      })
+      .catch(()=>{setBgUrl("");setBgLoading(false);});
   },[]);
-  async function finish(){
-    setSaving(true);
-    if(noteText.trim())await onSaveNote(noteText,episode?.id);
-    onComplete(minutes||1);
-    setDone(true);setSaving(false);
+
+  // Study minute counter
+  useEffect(()=>{
+    studyTimer.current=setInterval(()=>setMinutes(m=>m+1),60000);
+    return()=>clearInterval(studyTimer.current);
+  },[]);
+
+  // Pomodoro countdown
+  useEffect(()=>{
+    if(pomRunning){
+      timerRef.current=setInterval(()=>{
+        setPomSecs(s=>{
+          if(s<=1){
+            clearInterval(timerRef.current);
+            setPomRunning(false);
+            // Auto advance
+            if(pomMode==="work"){
+              const next=pomCount+1;
+              setPomCount(next);
+              const nextMode=next%4===0?"longBreak":"shortBreak";
+              setPomMode(nextMode);
+              setPomSecs(MODES[nextMode].mins*60);
+            } else {
+              setPomMode("work");
+              setPomSecs(MODES.work.mins*60);
+            }
+            return 0;
+          }
+          return s-1;
+        });
+      },1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return()=>clearInterval(timerRef.current);
+  },[pomRunning,pomMode]);
+
+  function switchMode(mode){
+    clearInterval(timerRef.current);
+    setPomMode(mode);
+    setPomSecs(MODES[mode].mins*60);
+    setPomRunning(false);
   }
-  return<div style={{position:"fixed",inset:0,background:"#1a1a1a",zIndex:500,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff"}}>
-    <button onClick={onExit} style={{position:"absolute",top:20,right:24,background:"none",border:"none",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>✕ 退出专注</button>
-    {!done?<>
-      <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:8,letterSpacing:".1em",textTransform:"uppercase"}}>{course.title}</div>
-      <div style={{fontSize:22,fontWeight:600,marginBottom:4,maxWidth:500,textAlign:"center"}}>{episode?.title||"学习中"}</div>
-      <div style={{fontSize:13,color:"rgba(255,255,255,.5)",marginBottom:48}}>已学习 {minutes} 分钟</div>
-      <div style={{width:"100%",maxWidth:500,marginBottom:32}}>
-        <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:8}}>学习笔记（可选，学完再写）</div>
-        <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} placeholder={"随手记下想法、重点、疑问…\n\n学完之后AI会帮你提炼关键点"} rows={6} style={{width:"100%",background:"rgba(255,255,255,.08)",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:10,padding:"12px 14px",color:"#fff",fontSize:14,lineHeight:1.7,outline:"none"}}/>
-      </div>
-      <div style={{display:"flex",gap:12}}>
-        <button onClick={onExit} style={{padding:"10px 24px",background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"}}>暂停，下次继续</button>
-        <button onClick={finish} disabled={saving} style={{padding:"10px 28px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>✓ 完成这一集</button>
-      </div>
-    </>:<div style={{textAlign:"center"}}>
-      <div style={{fontSize:48,marginBottom:16}}>🌟</div>
-      <div style={{fontSize:20,fontWeight:600,marginBottom:8}}>完成了！学了 {minutes} 分钟</div>
-      <div style={{fontSize:14,color:"rgba(255,255,255,.6)",marginBottom:32}}>你比昨天的自己又进了一步</div>
-      <button onClick={onExit} style={{padding:"10px 28px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"}}>回到课程</button>
-    </div>}
-  </div>;
+
+  function fmtTime(s){
+    return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+  }
+
+  const pct=pomSecs/(MODES[pomMode].mins*60);
+  const radius=54;
+  const circ=2*Math.PI*radius;
+  const strokeDash=circ*pct;
+  const modeColor=MODES[pomMode].color;
+
+  async function finish(){
+    if(noteText.trim())await onSaveNote(noteText,episode?.id);
+    onComplete(minutes||1,pomCount);
+    setDone(true);
+  }
+
+  const bgStyle=bgUrl?{
+    backgroundImage:"url("+bgUrl+")",
+    backgroundSize:"cover",
+    backgroundPosition:"center",
+  }:{
+    background:"linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%)",
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",...bgStyle}}>
+      {/* Dark overlay */}
+      <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.55)"}}/>
+      {/* Exit button */}
+      <button onClick={onExit} style={{position:"absolute",top:20,right:24,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.7)",fontSize:13,padding:"6px 14px",borderRadius:8,cursor:"pointer",zIndex:1}}>✕ 退出</button>
+      {/* Refresh wallpaper */}
+      <button onClick={()=>{setBgLoading(true);fetch("https://bing.com/HPImageArchive.aspx?format=js&idx="+Math.floor(Math.random()*7)+"&n=1&mkt=zh-CN").then(r=>r.json()).then(d=>{const p=d?.images?.[0]?.url;setBgUrl(p?"https://bing.com"+p:"");setBgLoading(false);}).catch(()=>{setBgUrl("");setBgLoading(false);});}} style={{position:"absolute",top:20,right:120,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.6)",fontSize:12,padding:"6px 12px",borderRadius:8,cursor:"pointer",zIndex:1}}>🖼 换壁纸</button>
+
+      {!done?(
+        <div style={{position:"relative",zIndex:1,display:"flex",flexDirection:"column",alignItems:"center",width:"100%",maxWidth:480,padding:"0 20px"}}>
+          {/* Course + episode */}
+          <div style={{fontSize:12,color:"rgba(255,255,255,.5)",marginBottom:4,letterSpacing:".08em",textTransform:"uppercase"}}>{course.title}</div>
+          <div style={{fontSize:18,fontWeight:600,color:"#fff",marginBottom:32,textAlign:"center",lineHeight:1.3}}>{episode?.title||"学习中"}</div>
+
+          {/* Pomodoro circle */}
+          <div style={{marginBottom:24,position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <svg width={130} height={130} style={{transform:"rotate(-90deg)"}}>
+              <circle cx={65} cy={65} r={radius} fill="none" stroke="rgba(255,255,255,.1)" strokeWidth={6}/>
+              <circle cx={65} cy={65} r={radius} fill="none" stroke={modeColor} strokeWidth={6}
+                strokeDasharray={circ} strokeDashoffset={circ-strokeDash}
+                strokeLinecap="round" style={{transition:"stroke-dashoffset .5s"}}/>
+            </svg>
+            <div style={{position:"absolute",textAlign:"center"}}>
+              <div style={{fontSize:28,fontWeight:700,color:"#fff",letterSpacing:2,fontFamily:"monospace"}}>{fmtTime(pomSecs)}</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",marginTop:2}}>{MODES[pomMode].label}</div>
+            </div>
+          </div>
+
+          {/* Mode tabs */}
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {Object.entries(MODES).map(([k,v])=>(
+              <button key={k} onClick={()=>switchMode(k)} style={{padding:"4px 12px",borderRadius:20,border:"0.5px solid rgba(255,255,255,.2)",background:pomMode===k?"rgba(255,255,255,.2)":"transparent",color:pomMode===k?"#fff":"rgba(255,255,255,.5)",fontSize:11,cursor:"pointer"}}>{v.label}</button>
+            ))}
+          </div>
+
+          {/* Controls */}
+          <div style={{display:"flex",gap:10,marginBottom:28}}>
+            <button onClick={()=>setPomRunning(r=>!r)} style={{padding:"10px 28px",borderRadius:8,border:"none",background:pomRunning?"rgba(255,255,255,.2)":modeColor,color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",minWidth:100}}>
+              {pomRunning?"⏸ 暂停":"▶ 开始"}
+            </button>
+            <button onClick={()=>{setPomRunning(false);setPomSecs(MODES[pomMode].mins*60);}} style={{padding:"10px 16px",borderRadius:8,border:"0.5px solid rgba(255,255,255,.2)",background:"transparent",color:"rgba(255,255,255,.6)",fontSize:13,cursor:"pointer"}}>↺ 重置</button>
+          </div>
+
+          {/* Study time */}
+          <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:20}}>已学习 {minutes} 分钟 · 第 {pomCount+1} 个番茄</div>
+
+          {/* Note */}
+          <textarea value={noteText} onChange={e=>setNoteText(e.target.value)}
+            placeholder={"随手记下想法、重点、疑问…"}
+            rows={3}
+            style={{width:"100%",background:"rgba(255,255,255,.08)",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:10,padding:"10px 14px",color:"#fff",fontSize:13,lineHeight:1.6,outline:"none",resize:"none",marginBottom:16}}/>
+
+          {/* Actions */}
+          <div style={{display:"flex",gap:10,width:"100%"}}>
+            <button onClick={onExit} style={{flex:1,padding:"10px",background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"}}>暂停，下次继续</button>
+            <button onClick={finish} style={{flex:1,padding:"10px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",fontWeight:500}}>✓ 完成这一集</button>
+          </div>
+        </div>
+      ):(
+        <div style={{position:"relative",zIndex:1,textAlign:"center"}}>
+          <div style={{fontSize:56,marginBottom:16}}>🌟</div>
+          <div style={{fontSize:22,fontWeight:600,color:"#fff",marginBottom:8}}>完成了！学了 {minutes} 分钟</div>
+          <div style={{fontSize:14,color:"rgba(255,255,255,.6)",marginBottom:32}}>你比昨天的自己又进了一步</div>
+          <button onClick={onExit} style={{padding:"10px 32px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer"}}>回到课程</button>
+        </div>
+      )}
+    </div>
+  );
 }
+
 
 // ── Note Card ──
 function NoteCard({note,onAISummarize,geminiKey,onDelete}){
@@ -1307,8 +1546,9 @@ function EditCourseModal({course,onSave,onClose}){
 }
 
 // ── Course Detail ──
-function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
+function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddPomEntry}){
   const [showEdit,setShowEdit]=useState(false);
+  const [editingEp,setEditingEp]=useState(null);
   const [showAddNote,setShowAddNote]=useState(false);
   const [showAddEp,setShowAddEp]=useState(false);
   const [newEpTitle,setNewEpTitle]=useState("");
@@ -1353,12 +1593,13 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
   if(focusEp!==null){
     const ep=course.episodes[focusEp];
     return<FocusMode course={course} episode={ep}
-      onComplete={(mins)=>{
+      onComplete={(mins,poms)=>{
         updateEp(ep.id,{status:"done"});
         const log=[...(course.studyLog||[]),{date:todayStr(),minutes:mins}];
         const nextIdx=course.episodes.findIndex((e,i)=>i>focusEp&&e.status==="todo");
         if(nextIdx>-1)updateEp(course.episodes[nextIdx].id,{status:"doing"});
         onUpdate({...course,studyLog:log,lastStudied:todayStr()});
+        if(onAddPomEntry&&poms>0)onAddPomEntry(poms,mins);
         setFocusEp(null);
       }}
       onSaveNote={(text,epId)=>addNote({title:`${ep?.title||""}笔记`,content:text,episodeId:epId,courseId:course.id})}
@@ -1416,15 +1657,22 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey}){
           {course.episodes.map((ep,i)=>{
             const s=STATUS_MAP[ep.status]||STATUS_MAP.todo;
             const isCurrent=ep.status==="doing";
-            return<div key={ep.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,background:isCurrent?"#EBF3FB":"transparent",border:isCurrent?"0.5px solid #B5D4F4":"0.5px solid transparent"}}>
-              <select value={ep.status} onChange={e=>updateEp(ep.id,{status:e.target.value})} style={{fontSize:11,padding:"2px 4px",border:"0.5px solid #e0ddd6",borderRadius:4,color:s.c,background:"#fff",cursor:"pointer"}}>
+            return<div key={ep.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",borderRadius:6,background:isCurrent?"#EBF3FB":"transparent",border:isCurrent?"0.5px solid #B5D4F4":"0.5px solid transparent"}}>
+              <select value={ep.status} onChange={e=>updateEp(ep.id,{status:e.target.value})} style={{fontSize:11,padding:"2px 4px",border:"0.5px solid #e0ddd6",borderRadius:4,color:s.c,background:"#fff",cursor:"pointer",flexShrink:0}}>
                 <option value="todo">未开始</option>
                 <option value="doing">进行中</option>
                 <option value="done">✓ 完成</option>
                 <option value="review">★ 复习</option>
               </select>
-              <span style={{flex:1,fontSize:13,color:ep.status==="done"?"#aaa":"#1a1a1a",textDecoration:ep.status==="done"?"line-through":"none"}}>{i+1}. {ep.title||"第"+(i+1)+"集"}</span>
-              <button onClick={()=>setFocusEp(i)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"1px 6px"}}>▶</button>
+              {editingEp===ep.id?(
+                <input autoFocus value={ep.title} onChange={e=>updateEp(ep.id,{title:e.target.value})}
+                  onBlur={()=>setEditingEp(null)} onKeyDown={e=>e.key==="Enter"&&setEditingEp(null)}
+                  style={{flex:1,fontSize:13,padding:"2px 4px",border:"0.5px solid #185FA5",borderRadius:4,outline:"none"}}/>
+              ):(
+                <span onClick={()=>setEditingEp(ep.id)} style={{flex:1,fontSize:13,color:ep.status==="done"?"#aaa":"#1a1a1a",textDecoration:ep.status==="done"?"line-through":"none",cursor:"text"}} title="点击编辑">{i+1}. {ep.title||"第"+(i+1)+"集"}</span>
+              )}
+              <button onClick={()=>setFocusEp(i)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"1px 5px",flexShrink:0}}>▶</button>
+              <button onClick={()=>{const eps=course.episodes.filter((_,j)=>j!==i);onUpdate({...course,episodes:eps});}} style={{fontSize:12,color:"#ddd",background:"none",border:"none",cursor:"pointer",padding:"1px 4px",flexShrink:0}} title="删除">✕</button>
             </div>;
           })}
         </div>
@@ -1527,7 +1775,7 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 }
 
 // ── Learning View (main) ──
-function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey}){
+function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry}){
   const [detail,setDetail]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showInbox,setShowInbox]=useState(false);
@@ -1553,7 +1801,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 
   if(detail){
     const course=courses.find(c=>c.id===detail);
-    if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey}/>;
+    if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey} onAddPomEntry={onAddPomEntry}/>;
   }
 
   return<div>
@@ -1613,8 +1861,466 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
   </div>;
 }
 
+// ═══════════════════════════════════════════
+// FEATURE 1: TODAY LAUNCH RITUAL
+// ═══════════════════════════════════════════
+function LaunchRitual({tasks,onDismiss,geminiKey}){
+  const [oneTask,setOneTask]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [weather,setWeather]=useState(null);
+  const [greeting,setGreeting]=useState("");
+  const hour=new Date().getHours();
+
+  useEffect(()=>{
+    if(hour<6)setGreeting("深夜了，注意休息");
+    else if(hour<11)setGreeting("早上好");
+    else if(hour<13)setGreeting("午前时分");
+    else if(hour<18)setGreeting("下午好");
+    else if(hour<21)setGreeting("傍晚了");
+    else setGreeting("晚上好");
+  },[]);
+
+  useEffect(()=>{
+    // Get weather via open-meteo (no key needed)
+    navigator.geolocation?.getCurrentPosition(pos=>{
+      const {latitude:lat,longitude:lon}=pos.coords;
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`)
+        .then(r=>r.json())
+        .then(d=>{
+          const code=d?.current_weather?.weathercode;
+          const temp=d?.current_weather?.temperature;
+          const icons={0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",48:"🌫",51:"🌦",61:"🌧",71:"🌨",80:"🌦",95:"⛈"};
+          const icon=icons[code]||"🌡";
+          setWeather(`${icon} ${Math.round(temp)}°C`);
+        }).catch(()=>{});
+    });
+  },[]);
+
+  async function genSuggestion(){
+    if(!geminiKey)return;
+    setLoading(true);
+    const urgent=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today")).slice(0,5);
+    const ctx=urgent.map(t=>`- ${t.title}`).join("\n")||"暂无任务";
+    try{
+      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:"根据以下任务列表，用一句话（15字以内）说明今天最重要的一件事是什么。只返回这一句话，不要其他内容。\n\n任务：\n"+ctx}]}]})
+      });
+      const data=await res.json();
+      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"";
+      setOneTask(reply.trim());
+    }catch(e){}
+    setLoading(false);
+  }
+
+  useEffect(()=>{genSuggestion();},[]);
+
+  const dateStr=new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"});
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#302b63,#24243e)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{textAlign:"center",maxWidth:400,width:"100%"}}>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:6,letterSpacing:".1em"}}>{dateStr}</div>
+        {weather&&<div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:20}}>{weather}</div>}
+        <div style={{fontSize:28,fontWeight:700,color:"#fff",marginBottom:32}}>{greeting}</div>
+        <div style={{background:"rgba(255,255,255,.08)",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:14,padding:"20px 24px",marginBottom:28}}>
+          <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:10,letterSpacing:".06em"}}>今天最重要的一件事</div>
+          {loading?(
+            <div style={{fontSize:15,color:"rgba(255,255,255,.4)",fontStyle:"italic"}}>AI思考中…</div>
+          ):(
+            <input value={oneTask} onChange={e=>setOneTask(e.target.value)}
+              placeholder="今天要完成什么？"
+              style={{width:"100%",background:"transparent",border:"none",outline:"none",fontSize:18,fontWeight:600,color:"#fff",textAlign:"center",lineHeight:1.4}}/>
+          )}
+        </div>
+        <button onClick={onDismiss} style={{width:"100%",padding:"14px",background:"#185FA5",color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer",letterSpacing:".04em"}}>
+          开始今天 →
+        </button>
+        <button onClick={onDismiss} style={{marginTop:12,background:"none",border:"none",color:"rgba(255,255,255,.3)",fontSize:13,cursor:"pointer"}}>跳过</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 2: ENERGY-AWARE TODAY VIEW helper
+// ═══════════════════════════════════════════
+function getEnergyLevel(){
+  const h=new Date().getHours();
+  if((h>=10&&h<11)||(h>=15&&h<18)||(h>=21&&h<24))return"high";
+  if((h>=11&&h<14)||(h>=18&&h<21))return"low";
+  return"medium";
+}
+function getEnergyLabel(){
+  const e=getEnergyLevel();
+  return{high:{label:"高能时段",color:"#0F6E56",bg:"#E1F5EE",tip:"适合做需要脑力的任务"},
+    medium:{label:"正常时段",color:"#185FA5",bg:"#EBF3FB",tip:"适合推进日常任务"},
+    low:{label:"低能时段",color:"#854F0B",bg:"#FAEEDA",tip:"做简单执行类任务，别硬撑"}
+  }[e];
+}
+function getTaskDifficulty(task){
+  // Infer from priority + title keywords
+  if(task.priority==="urgent")return"hard";
+  const easy=["回复","发送","预约","买","整理","打印","转发"];
+  if(easy.some(k=>task.title.includes(k)))return"easy";
+  return"normal";
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 3: SPACED REPETITION REVIEW
+// ═══════════════════════════════════════════
+function ReviewPanel({notes,courses,onUpdateNote,onClose}){
+  // Collect all notes with AI summaries that are due for review
+  const today=todayStr();
+  const allNotes=[];
+  courses.forEach(c=>{
+    (c.notes||[]).forEach(n=>{
+      if(n.aiSummary&&n.aiSummary.length>0){
+        allNotes.push({...n,courseName:c.title,courseId:c.id});
+      }
+    });
+  });
+
+  const dueNotes=allNotes.filter(n=>{
+    if(!n.nextReview)return true; // never reviewed
+    return n.nextReview<=today;
+  });
+
+  const [idx,setIdx]=useState(0);
+  const [revealed,setRevealed]=useState(false);
+
+  if(dueNotes.length===0){
+    return(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#fff",borderRadius:14,padding:32,maxWidth:400,width:"100%",textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:12}}>🎉</div>
+          <div style={{fontSize:16,fontWeight:500,marginBottom:8}}>今日复习完成！</div>
+          <div style={{fontSize:13,color:"#888",marginBottom:20}}>所有笔记都已复习过了</div>
+          <button onClick={onClose} style={{padding:"8px 24px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"}}>关闭</button>
+        </div>
+      </div>
+    );
+  }
+
+  const note=dueNotes[idx];
+  function respond(remembered){
+    // Spaced repetition intervals: 1d, 3d, 7d, 14d, 30d
+    const intervals=[1,3,7,14,30];
+    const lvl=Math.min((note.reviewLevel||0)+(remembered?1:-1),intervals.length-1);
+    const nextD=new Date();
+    nextD.setDate(nextD.getDate()+intervals[Math.max(0,lvl)]);
+    onUpdateNote(note.courseId,note.id,{reviewLevel:Math.max(0,lvl),nextReview:yyyymmdd(nextD),lastReviewed:today});
+    if(idx<dueNotes.length-1){setIdx(i=>i+1);setRevealed(false);}
+    else onClose();
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}}>
+        <div style={{padding:"16px 20px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:14,fontWeight:500}}>🔁 间隔复习</span>
+          <span style={{fontSize:12,color:"#aaa"}}>{idx+1}/{dueNotes.length}</span>
+          <button onClick={onClose} style={{fontSize:16,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{padding:"20px"}}>
+          <div style={{fontSize:11,color:"#888",marginBottom:4}}>{note.courseName}</div>
+          <div style={{fontSize:14,fontWeight:500,marginBottom:16,color:"#1a1a1a"}}>{note.title}</div>
+          {!revealed?(
+            <button onClick={()=>setRevealed(true)} style={{width:"100%",padding:"12px",background:"#f7f6f3",border:"0.5px dashed #ccc",borderRadius:8,fontSize:13,cursor:"pointer",color:"#666"}}>
+              点击显示关键要点
+            </button>
+          ):(
+            <div style={{background:"#EBF3FB",borderRadius:8,padding:"12px 14px",marginBottom:16}}>
+              {note.aiSummary.map((p,i)=><div key={i} style={{fontSize:13,color:"#1a1a1a",marginBottom:4}}>• {p}</div>)}
+              {note.aiAction&&<div style={{fontSize:13,color:"#0F6E56",marginTop:6,fontWeight:500}}>→ {note.aiAction}</div>}
+            </div>
+          )}
+        </div>
+        {revealed&&(
+          <div style={{padding:"0 20px 20px",display:"flex",gap:10}}>
+            <button onClick={()=>respond(false)} style={{flex:1,padding:"10px",background:"#FCEBEB",color:"#A32D2D",border:"none",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>😅 还没记住</button>
+            <button onClick={()=>respond(true)} style={{flex:1,padding:"10px",background:"#E1F5EE",color:"#0F6E56",border:"none",borderRadius:8,fontSize:13,cursor:"pointer",fontWeight:500}}>✓ 记住了</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 4: WEEKLY PLAN VIEW
+// ═══════════════════════════════════════════
+function WeeklyView({tasks,onUpdate,onAddTask}){
+  const [weekOffset,setWeekOffset]=useState(0);
+  const [showWeekPlan,setShowWeekPlan]=useState(false);
+  const [weekNote,setWeekNote]=useState(()=>lsGet("week_note_"+getWeekKey(0),""));
+
+  function getWeekKey(offset){
+    const d=new Date();d.setDate(d.getDate()-d.getDay()+1+offset*7);
+    return yyyymmdd(d);
+  }
+  function getWeekDays(offset){
+    const days=[];
+    const monday=new Date();
+    monday.setDate(monday.getDate()-((monday.getDay()+6)%7)+offset*7);
+    for(let i=0;i<7;i++){
+      const d=new Date(monday);d.setDate(d.getDate()+i);
+      days.push(yyyymmdd(d));
+    }
+    return days;
+  }
+
+  const days=getWeekDays(weekOffset);
+  const today=todayStr();
+  const DAY_NAMES=["周一","周二","周三","周四","周五","周六","周日"];
+
+  function getTasksForDay(day){
+    return tasks.filter(t=>t.due===day);
+  }
+  function moveTask(taskId,newDay){
+    const t=tasks.find(x=>x.id===taskId);
+    if(t)onUpdate({...t,due:newDay});
+  }
+
+  const totalPending=tasks.filter(t=>!t.done&&days.includes(t.due)).length;
+  const totalDone=tasks.filter(t=>t.done&&days.includes(t.due)).length;
+
+  return(
+    <div>
+      {/* Week nav */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+        <button onClick={()=>setWeekOffset(w=>w-1)} style={{background:"none",border:"0.5px solid #e0ddd6",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:13,color:"#666"}}>← 上周</button>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:14,fontWeight:500}}>{weekOffset===0?"本周":weekOffset===1?"下周":weekOffset===-1?"上周":days[0]+" 那周"}</div>
+          <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{totalPending}个待办 · {totalDone}个已完成</div>
+        </div>
+        <button onClick={()=>setWeekOffset(w=>w+1)} style={{background:"none",border:"0.5px solid #e0ddd6",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:13,color:"#666"}}>下周 →</button>
+      </div>
+
+      {/* Week note */}
+      <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"10px 14px",marginBottom:14}}>
+        <div style={{fontSize:11,color:"#aaa",marginBottom:4}}>本周目标（一句话）</div>
+        <input value={weekNote} onChange={e=>{setWeekNote(e.target.value);lsSet("week_note_"+getWeekKey(weekOffset),e.target.value);}} placeholder="这周最重要的是什么？" style={{width:"100%",border:"none",outline:"none",fontSize:13,color:"#1a1a1a"}}/>
+      </div>
+
+      {/* 7-day grid */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6}}>
+        {days.map((day,di)=>{
+          const dayTasks=getTasksForDay(day);
+          const isToday=day===today;
+          const isPast=day<today;
+          return(
+            <div key={day} style={{background:"#fff",border:`0.5px solid ${isToday?"#185FA5":"#e0ddd6"}`,borderRadius:8,padding:"8px 6px",minHeight:100}}>
+              <div style={{textAlign:"center",marginBottom:6}}>
+                <div style={{fontSize:11,color:isToday?"#185FA5":isPast?"#bbb":"#666"}}>{DAY_NAMES[di]}</div>
+                <div style={{fontSize:16,fontWeight:isToday?700:400,color:isToday?"#185FA5":isPast?"#bbb":"#1a1a1a",background:isToday?"#EBF3FB":"transparent",borderRadius:"50%",width:24,height:24,display:"flex",alignItems:"center",justifyContent:"center",margin:"2px auto"}}>
+                  {new Date(day+"T00:00:00").getDate()}
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                {dayTasks.slice(0,4).map(t=>(
+                  <div key={t.id} title={t.title} style={{fontSize:10,padding:"2px 5px",borderRadius:4,background:t.done?"#f0ede8":t.priority==="urgent"?"#FCEBEB":t.priority==="today"?"#FAEEDA":"#EBF3FB",color:t.done?"#aaa":t.priority==="urgent"?"#A32D2D":t.priority==="today"?"#854F0B":"#185FA5",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:t.done?"line-through":"none",cursor:"pointer"}}
+                    onClick={()=>{}}>
+                    {t.title}
+                  </div>
+                ))}
+                {dayTasks.length>4&&<div style={{fontSize:10,color:"#aaa",textAlign:"center"}}>+{dayTasks.length-4}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 5: HABIT TRACKER
+// ═══════════════════════════════════════════
+function HabitTracker({habits,onUpdateHabits}){
+  const today=todayStr();
+  const [showManage,setShowManage]=useState(false);
+  const [newHabit,setNewHabit]=useState("");
+
+  const DEFAULT_HABITS=[
+    {id:1,name:"学习",icon:"📚",color:"#185FA5"},
+    {id:2,name:"运动",icon:"🏃",color:"#0F6E56"},
+    {id:3,name:"早睡",icon:"🌙",color:"#533AB7"},
+  ];
+  const habitList=habits&&habits.length>0?habits:DEFAULT_HABITS;
+
+  function toggleHabit(habitId){
+    const updated=habitList.map(h=>{
+      if(h.id!==habitId)return h;
+      const log=h.log||{};
+      const newLog={...log,[today]:!log[today]};
+      return{...h,log:newLog};
+    });
+    onUpdateHabits(updated);
+  }
+  function addHabit(){
+    if(!newHabit.trim())return;
+    const icons=["⭐","🎯","💪","📖","🧘","🍎","💤","✏️"];
+    const colors=["#185FA5","#0F6E56","#993C1D","#533AB7","#854F0B"];
+    const h={id:Date.now(),name:newHabit.trim(),icon:icons[Math.floor(Math.random()*icons.length)],color:colors[Math.floor(Math.random()*colors.length)],log:{}};
+    onUpdateHabits([...habitList,h]);
+    setNewHabit("");
+  }
+  function removeHabit(id){onUpdateHabits(habitList.filter(h=>h.id!==id));}
+
+  // Get streak
+  function getStreak(habit){
+    const log=habit.log||{};
+    let streak=0;
+    const d=new Date();
+    while(true){
+      const k=yyyymmdd(d);
+      if(!log[k])break;
+      streak++;
+      d.setDate(d.getDate()-1);
+    }
+    return streak;
+  }
+
+  // Last 14 days for mini heatmap
+  function getLast14(habit){
+    const log=habit.log||{};
+    return Array.from({length:14},(_,i)=>{const d=new Date();d.setDate(d.getDate()-13+i);return{day:yyyymmdd(d),done:!!log[yyyymmdd(d)]};});
+  }
+
+  return(
+    <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:500}}>习惯打卡</span>
+        <button onClick={()=>setShowManage(v=>!v)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>{showManage?"完成":"管理"}</button>
+      </div>
+      {habitList.map(h=>{
+        const done=!!(h.log||{})[today];
+        const streak=getStreak(h);
+        const last14=getLast14(h);
+        return(
+          <div key={h.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <button onClick={()=>toggleHabit(h.id)} style={{width:36,height:36,borderRadius:10,border:`2px solid ${done?h.color:"#e0ddd6"}`,background:done?h.color:"#fff",color:done?"#fff":"#aaa",fontSize:16,cursor:"pointer",flexShrink:0,transition:"all .15s"}}>
+              {done?"✓":h.icon}
+            </button>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:13,fontWeight:500,color:"#1a1a1a"}}>{h.name}</span>
+                {streak>0&&<span style={{fontSize:11,color:h.color}}>🔥{streak}天</span>}
+              </div>
+              <div style={{display:"flex",gap:2,marginTop:3}}>
+                {last14.map((d,i)=>(
+                  <div key={i} style={{width:8,height:8,borderRadius:2,background:d.done?h.color:"#f0ede8"}}/>
+                ))}
+              </div>
+            </div>
+            {showManage&&<button onClick={()=>removeHabit(h.id)} style={{color:"#ddd",background:"none",border:"none",cursor:"pointer",fontSize:14,flexShrink:0}}>✕</button>}
+          </div>
+        );
+      })}
+      {showManage&&(
+        <div style={{display:"flex",gap:6,marginTop:8}}>
+          <input value={newHabit} onChange={e=>setNewHabit(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addHabit()} placeholder="新习惯名称" style={{flex:1,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+          <button onClick={addHabit} style={{padding:"6px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>+添加</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 6: TASK TIME ESTIMATE
+// ═══════════════════════════════════════════
+// Added as a field in TaskDetail - helper function
+function TimeEstimateSelect({value,onChange}){
+  const opts=[
+    {v:"",l:"不设置"},
+    {v:"15",l:"15分钟"},
+    {v:"30",l:"30分钟"},
+    {v:"60",l:"1小时"},
+    {v:"120",l:"2小时+"},
+  ];
+  return(
+    <select value={value||""} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
+      {opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+  );
+}
+function fmtEstimate(v){
+  if(!v)return"";
+  if(v==="15")return"15m";
+  if(v==="30")return"30m";
+  if(v==="60")return"1h";
+  if(v==="120")return"2h+";
+  return v+"m";
+}
+function getTotalEstimate(tasks){
+  return tasks.reduce((sum,t)=>{
+    const v=parseInt(t.estimate||"0");
+    return sum+(isNaN(v)?0:v);
+  },0);
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 7: PWA MANIFEST INJECTOR
+// ═══════════════════════════════════════════
+// Called once on mount to inject PWA meta tags
+function injectPWA(){
+  if(document.getElementById("pwa-manifest"))return;
+  const manifest={
+    name:"专注板",short_name:"专注板",
+    start_url:".",display:"standalone",
+    background_color:"#f7f6f3",theme_color:"#1a1a1a",
+    icons:[{src:"https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f9e0.png",sizes:"72x72",type:"image/png"}]
+  };
+  const blob=new Blob([JSON.stringify(manifest)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("link");
+  link.id="pwa-manifest";link.rel="manifest";link.href=url;
+  document.head.appendChild(link);
+  // Theme color
+  const meta=document.createElement("meta");
+  meta.name="theme-color";meta.content="#1a1a1a";
+  document.head.appendChild(meta);
+  // Apple
+  const apple=document.createElement("meta");
+  apple.name="apple-mobile-web-app-capable";apple.content="yes";
+  document.head.appendChild(apple);
+}
+
+// ═══════════════════════════════════════════
+// FEATURE 8: POMODORO HISTORY
+// ═══════════════════════════════════════════
+function PomodoroStats({log}){
+  // log: [{date, count, minutes}]
+  const today=todayStr();
+  const todayLog=log.find(l=>l.date===today)||{count:0,minutes:0};
+  const weekTotal=log.filter(l=>daysBetween(l.date,today)<=7).reduce((s,l)=>s+(l.count||0),0);
+
+  return(
+    <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:500,marginBottom:10}}>🍅 番茄统计</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+        {[["今日番茄",todayLog.count+"个"],["今日专注",Math.round((todayLog.minutes||0))+"分钟"],["本周番茄",weekTotal+"个"]].map(([l,v])=>(
+          <div key={l} style={{textAlign:"center",padding:"8px 4px",background:"#f7f6f3",borderRadius:6}}>
+            <div style={{fontSize:16,fontWeight:600,color:"#1a1a1a"}}>{v}</div>
+            <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{l}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const [sidebarOpen,setSidebarOpen]=useState(false);
+  const [showLaunch,setShowLaunch]=useState(()=>{
+    const k="launch_"+todayStr();
+    if(lsGet(k))return false;
+    lsSet(k,true);return true;
+  });
+  const [habits,setHabits]=useState([]);
+  const [pomLog,setPomLog]=useState([]);
   const [tasks,setTasks]=useState(SAMPLE_TASKS);
   const [journal,setJournal]=useState({});
   const [futureLog,setFutureLog]=useState({});
@@ -1629,6 +2335,7 @@ function App(){
   const [projView,setProjView]=useState(null);
   const [showMigration,setShowMigration]=useState(false);
   const [showBrainDump,setShowBrainDump]=useState(false);
+  const [showReview,setShowReview]=useState(false);
   const [showMonthlyReview,setShowMonthlyReview]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [syncStatus,setSyncStatus]=useState("idle");
@@ -1646,6 +2353,8 @@ function App(){
   const nextIdRef=useRef(nextId);
   const ghTokenRef=useRef(lsGet("zj_gh_token",""));
   const gistIdRef=useRef(lsGet("zj_gist_id",""));
+  const habitsRef=useRef([]);
+  const pomLogRef=useRef([]);
 
   // Keep refs in sync with state
   useEffect(()=>{tasksRef.current=tasks;},[tasks]);
@@ -1655,6 +2364,8 @@ function App(){
   useEffect(()=>{nextIdRef.current=nextId;},[nextId]);
   useEffect(()=>{ghTokenRef.current=ghToken;},[ghToken]);
   useEffect(()=>{gistIdRef.current=gistId;},[gistId]);
+  useEffect(()=>{habitsRef.current=habits;},[habits]);
+  useEffect(()=>{pomLogRef.current=pomLog;},[pomLog]);
 
   // load from gist on mount
   function loadFromGist(){
@@ -1691,6 +2402,7 @@ function App(){
       isFirstLoad.current=false;
     }
     // Safety: ensure isFirstLoad cleared after 5s no matter what
+    injectPWA();
     const safety=setTimeout(()=>{isFirstLoad.current=false;},5000);
     return()=>clearTimeout(safety);
   },[]);
@@ -1716,6 +2428,8 @@ function App(){
         journal:journalToSave,
         futureLog:flToSave,
         courses:coursesToSave,
+        habits:habitsRef.current,
+        pomLog:pomLogRef.current,
         nextId:nidToSave
       })
         .then(()=>setSyncStatus("saved"))
@@ -1726,6 +2440,17 @@ function App(){
   function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;triggerSave(next,undefined,undefined,undefined,undefined);return next;});}
   function setJournalAndSync(j){setJournal(j);triggerSave(undefined,j,undefined,undefined,undefined);}
   function setFutureLogAndSync(fl){setFutureLog(fl);triggerSave(undefined,undefined,fl,undefined,undefined);}
+  function updateCourseNote(courseId,noteId,changes){
+    setCourses(cs=>{
+      const next=cs.map(c=>{
+        if(c.id!==courseId)return c;
+        const notes=(c.notes||[]).map(n=>n.id===noteId?{...n,...changes}:n);
+        return{...c,notes};
+      });
+      triggerSave(undefined,undefined,undefined,undefined,next);
+      return next;
+    });
+  }
   function updateCourse(updated){
     setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);triggerSave(undefined,undefined,undefined,undefined,next);return next;});
   }
@@ -1744,6 +2469,23 @@ function App(){
   function addSubsFromAI(tid,steps){setTasksAndSync(ts=>ts.map(t=>t.id===tid?{...t,subtasks:steps,subtaskDone:steps.map(()=>false),expanded:true}:t));}
   function aiBreak(id){const t=tasks.find(t=>t.id===id);if(!t)return;setAiOpen(true);setTimeout(()=>{if(aiRef.current)aiRef.current(t);},150);}
 
+  function updateHabits(newHabits){
+    setHabits(newHabits);
+    habitsRef.current=newHabits;
+    triggerSave();
+  }
+  function addPomEntry(count,minutes){
+    const today=todayStr();
+    setPomLog(log=>{
+      const exists=log.find(l=>l.date===today);
+      const next=exists
+        ?log.map(l=>l.date===today?{...l,count:(l.count||0)+count,minutes:(l.minutes||0)+minutes}:l)
+        :[...log,{date:today,count,minutes}];
+      pomLogRef.current=next;
+      triggerSave();
+      return next;
+    });
+  }
   function addTask(partial){
     const newNid=nextIdRef.current+1;
     const t={...BLANK_TASK,...partial,id:nextIdRef.current};
@@ -1783,7 +2525,7 @@ function App(){
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail};
-  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"}];
+  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"weekly",l:"本周计划",i:"📆"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"}];
 
   return<div style={{display:"flex",height:"100vh",background:"#f7f6f3",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
@@ -1807,6 +2549,17 @@ function App(){
       <div style={{flex:1}}/>
       <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
         <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
+        {(()=>{
+          const today=todayStr();
+          const dueCount=courses.reduce((sum,c)=>{
+            return sum+(c.notes||[]).filter(n=>n.aiSummary&&(!n.nextReview||n.nextReview<=today)).length;
+          },0);
+          return(
+            <div onClick={()=>setShowReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:dueCount>0?"#185FA5":"#666",cursor:"pointer"}}>
+              🔁 笔记复习{dueCount>0&&<span style={{fontSize:11,background:"#185FA5",color:"#fff",borderRadius:10,padding:"1px 6px",marginLeft:4}}>{dueCount}</span>}
+            </div>
+          );
+        })()}
         <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
         <div onClick={()=>setShowMonthlyReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>📅 月度回顾</div>
         <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
@@ -1839,13 +2592,30 @@ function App(){
       )}
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
         {view==="today"&&<>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:20}}>
+          {/* Energy level indicator */}
+          {(()=>{const e=getEnergyLabel();return(
+            <div style={{background:e.bg,border:"0.5px solid "+e.color+"44",borderRadius:8,padding:"8px 14px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{fontSize:13,color:e.color,fontWeight:500}}>{e.label}</span>
+              <span style={{fontSize:12,color:e.color,opacity:.8}}>{e.tip}</span>
+            </div>
+          );})()}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
             {[["今日重点",focus.length],["待处理",tasks.filter(t=>!t.done).length],["已完成",done.length]].map(([l,v])=>(
               <div key={l} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:22,fontWeight:500}}>{v}</div><div style={{fontSize:12,color:"#aaa",marginTop:2}}>{l}</div>
               </div>
             ))}
           </div>
+          {/* Time estimate warning */}
+          {(()=>{const total=getTotalEstimate(focus.filter(t=>!t.done));return total>0?(
+            <div style={{fontSize:12,color:"#854F0B",background:"#FAEEDA",borderRadius:6,padding:"6px 12px",marginBottom:12}}>
+              ⏱ 今日重点预计需要约 {total>=60?Math.round(total/60)+"小时":total+"分钟"}
+            </div>
+          ):null;})()}
+          {/* Habit tracker */}
+          <HabitTracker habits={habits} onUpdateHabits={updateHabits}/>
+          {/* Pomodoro stats */}
+          {pomLog.length>0&&<PomodoroStats log={pomLog}/>}
           <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 现在专注这里</span>
@@ -1862,7 +2632,8 @@ function App(){
         </>}
         {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
-        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey}/>}
+        {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
+        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
           :<>{PROJECTS.map(p=>{const pts=tasks.filter(t=>t.project===p.id);const d=pts.filter(t=>t.done).length;const pct=pts.length?Math.round(d/pts.length*100):0;return<div key={p.id} onClick={()=>setProjView(p)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:12,cursor:"pointer"}}>
@@ -1887,6 +2658,8 @@ function App(){
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
     {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
+    {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey}/>}
+    {showReview&&<ReviewPanel courses={courses} onUpdateNote={updateCourseNote} onClose={()=>setShowReview(false)}/>}
     {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);ghTokenRef.current=t;gistIdRef.current=id;isFirstLoad.current=false;setTimeout(loadFromGist,100);}}/>}
 
     {showAdd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
