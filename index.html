@@ -1476,10 +1476,7 @@ function ImportPlanModal({onClose,onImport}){
             <div>
               <div style={{fontSize:12,color:"#555",marginBottom:6}}>支持格式：JSON数组、Claude生成的HTML计划、Markdown日程</div>
               <textarea value={text} onChange={e=>setText(e.target.value)} rows={10}
-                placeholder={"粘贴JSON数组、HTML计划或Markdown文本…
-
-例如让Claude生成：
-帮我制定3天Python学习计划，返回JSON格式，包含每天的标题、时长（estimate，分钟）、学习重点（notes，•开头）和作业（subtasks数组）"}
+                placeholder={"粘贴JSON数组、HTML计划或Markdown文本…\n\n例如让Claude生成：\n帮我制定3天Python学习计划，返回JSON格式，包含每天的标题、时长（estimate，分钟）、学习重点（notes，•开头）和作业（subtasks数组）"}
                 style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:12,lineHeight:1.7,fontFamily:"monospace"}}/>
               {err&&<div style={{fontSize:12,color:"#A32D2D",marginTop:6}}>{err}</div>}
               {parsed&&(
