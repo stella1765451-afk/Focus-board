@@ -176,27 +176,46 @@ function SyncBadge({status,hasToken}){
 /* ═══════════════════════════════════════════
    TASK ROW
 ═══════════════════════════════════════════ */
-function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen}){
+function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
   const p=getProj(task.project);
   const ov=isOverdue(task.due)&&!task.done;
   const stale=task.migrateCount>=3;
+  const dueToday=task.due===todayStr()&&!task.done;
+  const dueTomorrow=task.due===daysFromNow(1)&&!task.done;
+  const isBlockTask=task.title.startsWith("[Day ")&&task.notes?.includes("📌 今日微任务");
+  const hasCheckIn=task.checkInOutput||task.checkInDate;
+
+  // Urgency border color
+  let borderColor="#e0ddd6";
+  let bgColor="#fff";
+  if(ov){borderColor="#f5a8a8";bgColor="#FFFAFA";}
+  else if(dueToday){borderColor="#f0c070";bgColor="#FFFDF5";}
+  else if(stale){borderColor="#f0b8b8";}
+  else if(task.priority==="urgent"&&!task.done){borderColor="#e8b4b4";}
+
   return<div style={{marginBottom:5}} className="fade-in">
-    <div style={{background:"#fff",border:`0.5px solid ${stale?"#f0b8b8":"#e0ddd6"}`,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1}}>
+    <div style={{background:bgColor,border:"0.5px solid "+borderColor,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1,
+      outline:ov&&!task.done?"2px solid rgba(163,45,45,.15)":"none",outlineOffset:1}}>
       <Check checked={task.done} onClick={()=>onToggle(task.id)}/>
       <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onOpen(task)}>
         <div style={{fontSize:14,color:task.done?"#aaa":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
         <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:p.color}}>{p.name}</span>
+          {isBlockTask&&!hasCheckIn&&!task.done&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"1px 6px",borderRadius:4,fontWeight:600}}>需打卡</span>}
+          {hasCheckIn&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4}}>✓ 已打卡</span>}
           {task.notes&&<span style={{fontSize:11,color:"#bbb"}}>📝</span>}
           {task.attachments?.length>0&&<span style={{fontSize:11,color:"#bbb"}}>📎{task.attachments.length}</span>}
-          {stale&&<span style={{fontSize:11,color:"#A32D2D"}}>已推了{task.migrateCount}次，要不要删掉？</span>}
+          {stale&&<span style={{fontSize:11,color:"#A32D2D"}}>已推了{task.migrateCount}次</span>}
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
-        {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":"#aaa",whiteSpace:"nowrap"}}>📅{fmtDate(task.due)}</span>}
+        {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:ov?"#FCEBEB":dueToday?"#FAEEDA":"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
         <MigrateTag count={task.migrateCount}/>
-        {!task.done&&!task.subtasks.length&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
+        {isBlockTask&&!task.done&&onCheckIn&&(
+          <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
+        )}
+        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
         {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
       </div>
     </div>
@@ -206,6 +225,13 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen}){
         {s}
       </div>)}
     </div>}
+    {isBlockTask&&task.notes&&!task.done&&(()=>{
+      const micro=task.notes.match(/📌 今日微任务：(.+)/)?.[1];
+      if(!micro)return null;
+      return<div style={{marginLeft:40,marginTop:3,padding:"6px 10px",background:"#FAEEDA",borderRadius:6,fontSize:12,color:"#854F0B",borderLeft:"3px solid #854F0B"}}>
+        今天做：{micro}
+      </div>;
+    })()}
   </div>;
 }
 
@@ -1862,81 +1888,672 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 }
 
 // ═══════════════════════════════════════════
-// FEATURE 1: TODAY LAUNCH RITUAL
+// FEATURE 1: TODAY LAUNCH RITUAL (ADHD CONTRACT MODE)
 // ═══════════════════════════════════════════
 function LaunchRitual({tasks,onDismiss,geminiKey}){
-  const [oneTask,setOneTask]=useState("");
-  const [loading,setLoading]=useState(false);
+  const [step,setStep]=useState(0); // 0=greeting 1=pick-tasks 2=confirm
   const [weather,setWeather]=useState(null);
   const [greeting,setGreeting]=useState("");
+  const [aiSuggestion,setAiSuggestion]=useState("");
+  const [aiLoading,setAiLoading]=useState(false);
+  const [selected,setSelected]=useState([]); // selected task ids
   const hour=new Date().getHours();
 
   useEffect(()=>{
-    if(hour<6)setGreeting("深夜了，注意休息");
+    if(hour<6)setGreeting("深夜了");
     else if(hour<11)setGreeting("早上好");
-    else if(hour<13)setGreeting("午前时分");
+    else if(hour<13)setGreeting("上午好");
     else if(hour<18)setGreeting("下午好");
     else if(hour<21)setGreeting("傍晚了");
     else setGreeting("晚上好");
-  },[]);
-
-  useEffect(()=>{
-    // Get weather via open-meteo (no key needed)
     navigator.geolocation?.getCurrentPosition(pos=>{
-      const {latitude:lat,longitude:lon}=pos.coords;
-      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`)
-        .then(r=>r.json())
-        .then(d=>{
+      fetch("https://api.open-meteo.com/v1/forecast?latitude="+pos.coords.latitude+"&longitude="+pos.coords.longitude+"&current_weather=true")
+        .then(r=>r.json()).then(d=>{
           const code=d?.current_weather?.weathercode;
           const temp=d?.current_weather?.temperature;
-          const icons={0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",48:"🌫",51:"🌦",61:"🌧",71:"🌨",80:"🌦",95:"⛈"};
-          const icon=icons[code]||"🌡";
-          setWeather(`${icon} ${Math.round(temp)}°C`);
+          const icons={0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",51:"🌦",61:"🌧",71:"🌨",80:"🌦",95:"⛈"};
+          setWeather((icons[code]||"🌡")+" "+Math.round(temp)+"°C");
         }).catch(()=>{});
     });
   },[]);
 
-  async function genSuggestion(){
-    if(!geminiKey)return;
-    setLoading(true);
-    const urgent=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today")).slice(0,5);
-    const ctx=urgent.map(t=>`- ${t.title}`).join("\n")||"暂无任务";
+  const urgentTasks=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"||isOverdue(t.due)));
+  const normalTasks=tasks.filter(t=>!t.done&&t.priority==="normal"&&!isOverdue(t.due));
+  const allPickable=[...urgentTasks,...normalTasks].slice(0,8);
+
+  function toggleSel(id){
+    setSelected(s=>s.includes(id)?s.filter(x=>x!==id):(s.length<3?[...s,id]:s));
+  }
+
+  async function getAISuggestion(){
+    if(!geminiKey||aiLoading)return;
+    setAiLoading(true);
+    const ctx=allPickable.map(t=>"- "+t.title+"（"+t.priority+(t.due?"，截止"+fmtDate(t.due):"")+")").join("\n");
     try{
       const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({contents:[{parts:[{text:"根据以下任务列表，用一句话（15字以内）说明今天最重要的一件事是什么。只返回这一句话，不要其他内容。\n\n任务：\n"+ctx}]}]})
+        body:JSON.stringify({contents:[{parts:[{text:"你是ADHD效率教练。根据以下任务，选出今天最应该优先完成的1-2件事（考虑截止日期和重要性），用一句话解释原因。不超过30字。\n\n任务:\n"+ctx}]}]})
       });
       const data=await res.json();
-      const reply=data.candidates?.[0]?.content?.parts?.[0]?.text||"";
-      setOneTask(reply.trim());
+      setAiSuggestion(data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||"");
     }catch(e){}
+    setAiLoading(false);
+  }
+
+  const selTasks=tasks.filter(t=>selected.includes(t.id));
+  const totalEst=selTasks.reduce((a,t)=>a+(parseInt(t.estimate)||0),0);
+  const dateStr=new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"});
+
+  // Step 0: greeting + proceed
+  if(step===0) return(
+    <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#1a1744,#0f3460)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{textAlign:"center",maxWidth:380,width:"100%"}}>
+        <div style={{fontSize:12,color:"rgba(255,255,255,.35)",marginBottom:8,letterSpacing:".12em",textTransform:"uppercase"}}>{dateStr}</div>
+        {weather&&<div style={{fontSize:13,color:"rgba(255,255,255,.35)",marginBottom:20}}>{weather}</div>}
+        <div style={{fontSize:36,fontWeight:700,color:"#fff",marginBottom:12,letterSpacing:"-.02em"}}>{greeting}</div>
+        <div style={{fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:48,lineHeight:1.6}}>
+          今天，你只需要做好<span style={{color:"rgba(255,200,100,.8)",fontWeight:600}}> 1–3 件事</span>。<br/>先花30秒，把它们定下来。
+        </div>
+        <button onClick={()=>{setStep(1);getAISuggestion();}} style={{width:"100%",padding:"15px",background:"#185FA5",color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer",letterSpacing:".04em"}}>
+          定下今天的任务 →
+        </button>
+        <button onClick={onDismiss} style={{marginTop:14,background:"none",border:"none",color:"rgba(255,255,255,.25)",fontSize:12,cursor:"pointer"}}>跳过（不推荐）</button>
+      </div>
+    </div>
+  );
+
+  // Step 1: pick tasks
+  if(step===1) return(
+    <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#1a1744,#0f3460)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-start",padding:"32px 16px",overflowY:"auto"}}>
+      <div style={{width:"100%",maxWidth:460}}>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:6,letterSpacing:".08em"}}>{dateStr}</div>
+        <div style={{fontSize:22,fontWeight:700,color:"#fff",marginBottom:6}}>今天做哪几件事？</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.45)",marginBottom:20}}>最多选3个。选完就是今天的合同，不能随意加。</div>
+
+        {aiSuggestion&&(
+          <div style={{background:"rgba(255,200,80,.12)",border:"0.5px solid rgba(255,200,80,.3)",borderRadius:10,padding:"10px 14px",marginBottom:16,display:"flex",gap:8,alignItems:"flex-start"}}>
+            <span style={{fontSize:14,flexShrink:0}}>✨</span>
+            <span style={{fontSize:12,color:"rgba(255,220,100,.85)",lineHeight:1.6}}>{aiSuggestion}</span>
+          </div>
+        )}
+        {aiLoading&&!aiSuggestion&&(
+          <div style={{background:"rgba(255,255,255,.05)",borderRadius:10,padding:"10px 14px",marginBottom:16}}>
+            <span style={{fontSize:12,color:"rgba(255,255,255,.3)",fontStyle:"italic"}} className="pulse">AI分析任务中…</span>
+          </div>
+        )}
+
+        {urgentTasks.length>0&&(
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:"rgba(255,100,100,.7)",marginBottom:6,letterSpacing:".06em",textTransform:"uppercase"}}>🔴 紧急 / 今天</div>
+            {urgentTasks.slice(0,5).map(t=>{
+              const sel=selected.includes(t.id);
+              return<div key={t.id} onClick={()=>toggleSel(t.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,marginBottom:4,cursor:"pointer",background:sel?"rgba(24,95,165,.4)":"rgba(255,255,255,.05)",border:sel?"0.5px solid rgba(100,160,255,.5)":"0.5px solid rgba(255,255,255,.08)",transition:"all .15s"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:sel?"none":"1.5px solid rgba(255,255,255,.3)",background:sel?"#185FA5":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  {sel&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:sel?"#fff":"rgba(255,255,255,.75)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
+                  {t.due&&<div style={{fontSize:11,color:isOverdue(t.due)?"rgba(255,100,100,.8)":"rgba(255,255,255,.35)",marginTop:1}}>📅 {fmtDate(t.due)}{t.estimate&&" · "+t.estimate+"分钟"}</div>}
+                </div>
+                {getProj(t.project)&&<span style={{fontSize:10,color:"rgba(255,255,255,.3)",flexShrink:0}}>{getProj(t.project).name}</span>}
+              </div>;
+            })}
+          </div>
+        )}
+
+        {normalTasks.length>0&&(
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.3)",marginBottom:6,letterSpacing:".06em",textTransform:"uppercase"}}>其他待办</div>
+            {normalTasks.slice(0,4).map(t=>{
+              const sel=selected.includes(t.id);
+              return<div key={t.id} onClick={()=>toggleSel(t.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,marginBottom:4,cursor:"pointer",background:sel?"rgba(24,95,165,.35)":"rgba(255,255,255,.04)",border:sel?"0.5px solid rgba(100,160,255,.4)":"0.5px solid rgba(255,255,255,.06)",transition:"all .15s"}}>
+                <div style={{width:18,height:18,borderRadius:"50%",border:sel?"none":"1.5px solid rgba(255,255,255,.2)",background:sel?"#185FA5":"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  {sel&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
+                </div>
+                <div style={{fontSize:13,color:sel?"#fff":"rgba(255,255,255,.5)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
+              </div>;
+            })}
+          </div>
+        )}
+
+        {allPickable.length===0&&(
+          <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.35)",fontSize:14}}>
+            任务列表是空的，今天先休息 🎉
+          </div>
+        )}
+
+        <div style={{position:"sticky",bottom:0,paddingTop:12,paddingBottom:8,background:"linear-gradient(transparent,rgba(15,12,41,.95))"}}>
+          {selected.length>0&&(
+            <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:10,textAlign:"center"}}>
+              已选 {selected.length}/3 件事{totalEst>0?" · 预计"+totalEst+"分钟":""}
+            </div>
+          )}
+          <button
+            onClick={()=>{if(selected.length>0)setStep(2);else onDismiss();}}
+            style={{width:"100%",padding:"14px",background:selected.length>0?"#185FA5":"rgba(255,255,255,.1)",color:"#fff",border:"none",borderRadius:12,fontSize:15,fontWeight:600,cursor:"pointer",letterSpacing:".03em",transition:"background .2s"}}
+          >
+            {selected.length>0?"确认，开始今天 →":"没有紧急任务，直接开始 →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Step 2: confirm contract
+  return(
+    <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#1a1744,#0f3460)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:420}}>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.35)",marginBottom:16,textAlign:"center",letterSpacing:".08em"}}>今日合同</div>
+        <div style={{background:"rgba(255,255,255,.06)",border:"0.5px solid rgba(255,255,255,.12)",borderRadius:14,padding:"20px",marginBottom:24}}>
+          {selTasks.map((t,i)=>(
+            <div key={t.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"10px 0",borderBottom:i<selTasks.length-1?"0.5px solid rgba(255,255,255,.08)":"none"}}>
+              <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(24,95,165,.6)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
+                <span style={{color:"#fff",fontSize:12,fontWeight:700}}>{i+1}</span>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,color:"#fff",fontWeight:500,lineHeight:1.4}}>{t.title}</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.35)",marginTop:3}}>
+                  {getProj(t.project).name}
+                  {t.due&&<span style={{marginLeft:8}}>📅 {fmtDate(t.due)}</span>}
+                  {t.estimate&&<span style={{marginLeft:8}}>⏱ {t.estimate}分钟</span>}
+                </div>
+                {t.subtasks&&t.subtasks.length>0&&(
+                  <div style={{marginTop:6,fontSize:11,color:"rgba(255,255,255,.4)"}}>
+                    第一步：{t.subtasks[0]}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        {totalEst>0&&(
+          <div style={{fontSize:13,color:"rgba(255,200,100,.7)",textAlign:"center",marginBottom:20}}>
+            预计总时长约 {totalEst>=60?Math.round(totalEst/60)+"小时":totalEst+"分钟"}
+          </div>
+        )}
+        <button onClick={onDismiss} style={{width:"100%",padding:"15px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer",letterSpacing:".04em"}}>
+          ✓ 签下合同，开始专注
+        </button>
+        <button onClick={()=>setStep(1)} style={{marginTop:10,width:"100%",background:"none",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:10,padding:"10px",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>← 重新选择</button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// BLOCK BREAKER: 严苛节点拆解 + 每日打卡
+// ═══════════════════════════════════════════
+function BlockBreaker({tasks,onAddTask,onUpdateTask,geminiKey,onClose}){
+  const [step,setStep]=useState("select"); // select | config | breaking | done
+  const [selTask,setSelTask]=useState(null);
+  const [deadline,setDeadline]=useState("");
+  const [dailyMins,setDailyMins]=useState("60");
+  const [outputType,setOutputType]=useState("截图");
+  const [loading,setLoading]=useState(false);
+  const [blocks,setBlocks]=useState([]); // [{day, title, microtask, output, done}]
+  const [editIdx,setEditIdx]=useState(null);
+
+  const bigTasks=tasks.filter(t=>!t.done&&(t.subtasks.length>0||t.estimate>="60"||t.priority==="urgent"));
+  const allTasks=tasks.filter(t=>!t.done);
+
+  async function breakTask(){
+    if(!selTask||!deadline)return;
+    setLoading(true);setStep("breaking");
+    const daysLeft=Math.max(daysBetween(todayStr(),deadline),1);
+    const prompt="你是一个严格的ADHD效率教练。将以下任务拆解成每日微任务节点。\n\n"
+      +"任务："+selTask.title+"\n"
+      +(selTask.notes?"背景："+selTask.notes+"\n":"")
+      +"截止日期："+deadline+"（还剩"+daysLeft+"天）\n"
+      +"每天可用时间："+dailyMins+"分钟\n"
+      +"要求产出格式："+outputType+"\n\n"
+      +"拆解原则（严格执行）：\n"
+      +"1. 第1天必须是'跑通最粗糙的全流程骨架'，哪怕极其简陋，要能看到完整框架\n"
+      +"2. 每一天只能做一件事，粒度要细到当天坐下来就知道怎么开始\n"
+      +"3. 每天必须有一个具体可上传/截图/展示的产出物\n"
+      +"4. 优先跑通全流程，再从第3天起逐步细化局部\n"
+      +"5. 最后1天是'收尾+验收'，不加新内容\n\n"
+      +"返回JSON数组，每项格式：\n"
+      +"{\"day\":1,\"title\":\"Day 1 标题（10字内）\",\"microtask\":\"今天具体做什么（20字内，动词开头）\",\"output\":\"今天必须产出什么（具体，如：一张截图/一个文件/一段代码）\",\"mins\":"+dailyMins+"}\n\n"
+      +"只返回JSON数组，不要其他内容。节点数="+Math.min(daysLeft,14)+"个。";
+    try{
+      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+      });
+      const data=await res.json();
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||"[]";
+      const clean=raw.replace(/```json|```/g,"").trim();
+      const parsed=JSON.parse(clean);
+      setBlocks(parsed.map((b,i)=>({...b,id:Date.now()+i,done:false,checkIn:""})));
+      setStep("done");
+    }catch(e){
+      alert("拆解失败："+e.message+"\n请检查Gemini Key");
+      setStep("config");
+    }
     setLoading(false);
   }
 
-  useEffect(()=>{genSuggestion();},[]);
+  function addBlocksToTasks(){
+    const baseDate=todayStr();
+    blocks.forEach((b,i)=>{
+      const due=addDays(baseDate,i);
+      onAddTask({
+        title:"[Day "+b.day+"] "+b.title,
+        project:selTask.project,
+        priority:i===0?"urgent":i<3?"today":"normal",
+        due,
+        estimate:String(b.mins||parseInt(dailyMins)||60),
+        notes:"📌 今日微任务："+b.microtask+"\n\n✅ 产出要求："+b.output,
+        subtasks:[b.microtask,"上传/记录产出："+b.output],
+        subtaskDone:[false,false],
+      });
+    });
+    onClose();
+  }
 
-  const dateStr=new Date().toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"});
+  const OUTPUT_TYPES=["截图","笔记文档","代码文件","草图/线稿","录屏","表格","思维导图","其他"];
+
+  if(step==="select") return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+        <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:600}}>🔨 节点拆解</div>
+            <div style={{fontSize:12,color:"#888",marginTop:2}}>把大任务拆成每天只管跑通一个节点</div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+          <div style={{fontSize:12,color:"#888",marginBottom:10}}>选择要拆解的任务：</div>
+          {allTasks.length===0&&<div style={{fontSize:13,color:"#bbb",textAlign:"center",padding:"32px 0"}}>没有待办任务</div>}
+          {allTasks.map(t=>(
+            <div key={t.id} onClick={()=>setSelTask(t)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:8,marginBottom:6,cursor:"pointer",border:"1.5px solid "+(selTask?.id===t.id?"#185FA5":"#e0ddd6"),background:selTask?.id===t.id?"#EBF3FB":"#fff",transition:"all .15s"}}>
+              <div style={{width:10,height:10,borderRadius:"50%",background:getProj(t.project).color,flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:selTask?.id===t.id?600:400}}>{t.title}</div>
+                <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{getProj(t.project).name}{t.due&&" · 截止 "+fmtDate(t.due)}</div>
+              </div>
+              <Tag type={t.priority}/>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6"}}>
+          <button onClick={()=>{if(selTask)setStep("config");}} style={{width:"100%",padding:"11px",background:selTask?"#1a1a1a":"#ccc",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:selTask?"pointer":"default",fontWeight:500}}>
+            {selTask?"下一步：设置节奏 →":"先选一个任务"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if(step==="config") return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:460,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+        <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+          <div style={{fontSize:15,fontWeight:600}}>设置拆解节奏</div>
+          <div style={{fontSize:12,color:"#185FA5",marginTop:4,background:"#EBF3FB",padding:"4px 10px",borderRadius:6,display:"inline-block"}}>{selTask.title}</div>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>截止日期 <span style={{color:"#A32D2D"}}>*</span></div>
+            <input type="date" value={deadline} onChange={e=>setDeadline(e.target.value)} min={todayStr()}
+              style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+            {deadline&&<div style={{fontSize:11,color:"#888",marginTop:4}}>还剩 {Math.max(daysBetween(todayStr(),deadline),0)} 天，生成 {Math.min(Math.max(daysBetween(todayStr(),deadline),1),14)} 个节点</div>}
+          </div>
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>每天能投入多少分钟？</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {["30","45","60","90","120"].map(m=>(
+                <button key={m} onClick={()=>setDailyMins(m)} style={{padding:"6px 16px",borderRadius:20,border:"1.5px solid "+(dailyMins===m?"#185FA5":"#e0ddd6"),background:dailyMins===m?"#185FA5":"#fff",color:dailyMins===m?"#fff":"#555",fontSize:13,cursor:"pointer",transition:"all .15s"}}>{m}分钟</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>每天必须产出什么格式？</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {OUTPUT_TYPES.map(o=>(
+                <button key={o} onClick={()=>setOutputType(o)} style={{padding:"5px 12px",borderRadius:20,border:"1.5px solid "+(outputType===o?"#0F6E56":"#e0ddd6"),background:outputType===o?"#0F6E56":"#fff",color:outputType===o?"#fff":"#555",fontSize:12,cursor:"pointer",transition:"all .15s"}}>{o}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{background:"#FAEEDA",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#854F0B",lineHeight:1.6}}>
+            💡 <strong>Blocking原则：</strong>第1天会强制要你跑通最粗糙的全流程骨架，哪怕极其简陋。先有全局，再细化局部。
+          </div>
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
+          <button onClick={()=>setStep("select")} style={{padding:"8px 16px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>← 返回</button>
+          <button onClick={breakTask} disabled={!deadline||!geminiKey} style={{flex:1,padding:"10px",background:deadline&&geminiKey?"#1a1a1a":"#ccc",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:deadline&&geminiKey?"pointer":"default",fontWeight:500}}>
+            {!geminiKey?"需要先设置AI Key":"🔨 AI拆解成每日节点"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if(step==="breaking") return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center",color:"#fff"}}>
+        <div style={{fontSize:32,marginBottom:16}} className="pulse">🔨</div>
+        <div style={{fontSize:16,fontWeight:500,marginBottom:8}}>正在拆解节点…</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.5)"}}>AI正在生成每日微任务</div>
+      </div>
+    </div>
+  );
+
+  // step === done: show blocks
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:400,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:16,overflowY:"auto"}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:560,boxShadow:"0 12px 48px rgba(0,0,0,.2)",marginBottom:40}} className="fade-in">
+        <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+          <div style={{fontSize:15,fontWeight:600}}>✅ 节点拆解完成</div>
+          <div style={{fontSize:12,color:"#185FA5",marginTop:4}}>{selTask.title} → {blocks.length}个每日节点</div>
+        </div>
+        <div style={{padding:"14px 20px",maxHeight:"55vh",overflowY:"auto"}}>
+          {blocks.map((b,i)=>(
+            <div key={b.id} style={{marginBottom:10,border:"0.5px solid "+(i===0?"#854F0B":"#e0ddd6"),borderRadius:10,overflow:"hidden",background:i===0?"#FFFBF2":"#fff"}}>
+              <div style={{padding:"10px 14px",borderBottom:"0.5px solid "+(i===0?"#f0d8a8":"#f0ede8"),display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,fontWeight:700,color:i===0?"#854F0B":"#185FA5",background:i===0?"#FAEEDA":"#EBF3FB",padding:"2px 8px",borderRadius:10,flexShrink:0}}>
+                  Day {b.day}{i===0?" 🏗 骨架优先":""}
+                </span>
+                <span style={{fontSize:13,fontWeight:500,flex:1}}>{b.title}</span>
+                <span style={{fontSize:11,color:"#aaa"}}>{b.mins}分钟</span>
+              </div>
+              <div style={{padding:"8px 14px",display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{fontSize:12,color:"#333"}}>
+                  <span style={{color:"#0F6E56",fontWeight:600}}>📌 今天做：</span> {b.microtask}
+                </div>
+                <div style={{fontSize:12,color:"#185FA5"}}>
+                  <span style={{fontWeight:600}}>📤 产出：</span> {b.output}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",background:"#f7f6f3",borderRadius:"0 0 14px 14px"}}>
+          <div style={{fontSize:12,color:"#888",marginBottom:10}}>加入任务列表后，每天在"今日焦点"里会出现对应节点，完成时必须记录产出。</div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onClose} style={{padding:"8px 16px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+            <button onClick={addBlocksToTasks} style={{flex:1,padding:"10px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:500,cursor:"pointer"}}>
+              ✓ 加入任务列表 ({blocks.length}个节点)
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// BLOCKING VIEW: 全局框架视图
+// ═══════════════════════════════════════════
+function BlockingView({tasks,onUpdate,onAddTask,geminiKey}){
+  const [showSetup,setShowSetup]=useState(false);
+  const [projName,setProjName]=useState("");
+  const [projGoal,setProjGoal]=useState("");
+  const [layers,setLayers]=useState([]); // [{id,phase,title,desc,tasks:[id],color,expanded}]
+  const [loading,setLoading]=useState(false);
+  const [savedLayers,setSavedLayers]=useState(()=>lsGet("zj_blocking_layers",[]));
+  const [activeLayer,setActiveLayer]=useState(null);
+
+  function saveLayers(l){setSavedLayers(l);lsSet("zj_blocking_layers",l);}
+
+  const PHASES=[
+    {id:"skeleton",label:"第1层：骨架跑通",color:"#854F0B",bg:"#FAEEDA",desc:"最粗糙的完整流程，哪怕极简陋"},
+    {id:"rough",label:"第2层：粗略完善",color:"#185FA5",bg:"#EBF3FB",desc:"填充主要内容，不管细节质量"},
+    {id:"refine",label:"第3层：局部细化",color:"#0F6E56",bg:"#E1F5EE",desc:"逐个打磨细节，提升质量"},
+    {id:"polish",label:"第4层：收尾验收",color:"#533AB7",bg:"#EDE8FF",desc:"整合、检查、最终交付"},
+  ];
+
+  async function generateBlocking(){
+    if(!projName||!geminiKey)return;
+    setLoading(true);
+    const existingTasks=tasks.filter(t=>!t.done).map(t=>"- "+t.title).join("\n");
+    const prompt="你是一个项目拆解专家，专门帮助ADHD用户用Blocking（区块化）工作流管理项目。\n\n"
+      +"项目名称："+projName+"\n"
+      +(projGoal?"项目目标："+projGoal+"\n":"")
+      +(existingTasks?"现有相关任务：\n"+existingTasks+"\n\n":"")
+      +"按照4个阶段生成Blocking工作框架：\n"
+      +"1. 骨架跑通（Skeleton）：用最简陋的方式完成整个流程，目的是确认思路和时间线是对的\n"
+      +"2. 粗略完善（Rough）：填充主要内容，不需要质量，只要覆盖所有模块\n"
+      +"3. 局部细化（Refine）：选择重点区域深度打磨\n"
+      +"4. 收尾验收（Polish）：整合检查，准备交付\n\n"
+      +"每个阶段生成2-4个具体任务。\n"
+      +"返回JSON：{\"phases\":[{\"phase\":\"skeleton\",\"tasks\":[{\"title\":\"任务名\",\"desc\":\"具体做什么（一句话）\"}]}]}\n"
+      +"只返回JSON，不要其他内容。";
+    try{
+      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+      });
+      const data=await res.json();
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||"{}";
+      const clean=raw.replace(/```json|```/g,"").trim();
+      const parsed=JSON.parse(clean);
+      const newLayers=PHASES.map(ph=>{
+        const phData=parsed.phases?.find(p=>p.phase===ph.id)||{tasks:[]};
+        return{id:ph.id+Date.now(),phase:ph.id,title:ph.label,phTasks:phData.tasks||[],expanded:ph.id==="skeleton"};
+      });
+      const newEntry={id:Date.now(),name:projName,goal:projGoal,layers:newLayers,createdAt:todayStr()};
+      const updated=[...savedLayers,newEntry];
+      saveLayers(updated);
+      setActiveLayer(newEntry.id);
+      setShowSetup(false);setProjName("");setProjGoal("");
+    }catch(e){alert("生成失败："+e.message);}
+    setLoading(false);
+  }
+
+  function addPhaseTaskToBoard(phaseName,taskDef,layerId){
+    const phObj=PHASES.find(p=>p.id===phaseName);
+    onAddTask({
+      title:"["+phObj?.label.replace("层：","/")+"] "+taskDef.title,
+      project:2,
+      priority:phaseName==="skeleton"?"urgent":phaseName==="rough"?"today":"normal",
+      due:"",
+      notes:taskDef.desc||"",
+    });
+  }
+
+  const activeEntry=savedLayers.find(l=>l.id===activeLayer)||savedLayers[savedLayers.length-1];
 
   return(
-    <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#302b63,#24243e)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{textAlign:"center",maxWidth:400,width:"100%"}}>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:6,letterSpacing:".1em"}}>{dateStr}</div>
-        {weather&&<div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:20}}>{weather}</div>}
-        <div style={{fontSize:28,fontWeight:700,color:"#fff",marginBottom:32}}>{greeting}</div>
-        <div style={{background:"rgba(255,255,255,.08)",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:14,padding:"20px 24px",marginBottom:28}}>
-          <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginBottom:10,letterSpacing:".06em"}}>今天最重要的一件事</div>
-          {loading?(
-            <div style={{fontSize:15,color:"rgba(255,255,255,.4)",fontStyle:"italic"}}>AI思考中…</div>
-          ):(
-            <input value={oneTask} onChange={e=>setOneTask(e.target.value)}
-              placeholder="今天要完成什么？"
-              style={{width:"100%",background:"transparent",border:"none",outline:"none",fontSize:18,fontWeight:600,color:"#fff",textAlign:"center",lineHeight:1.4}}/>
-          )}
+    <div>
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:500}}>🏗 Blocking 框架</div>
+          <div style={{fontSize:12,color:"#888",marginTop:2}}>先跑通全流程骨架，再逐层细化——防止陷入细节</div>
         </div>
-        <button onClick={onDismiss} style={{width:"100%",padding:"14px",background:"#185FA5",color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer",letterSpacing:".04em"}}>
-          开始今天 →
+        <button onClick={()=>setShowSetup(true)} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:12,cursor:"pointer"}}>
+          {geminiKey?"✨ AI生成框架":"+ 新建框架"}
         </button>
-        <button onClick={onDismiss} style={{marginTop:12,background:"none",border:"none",color:"rgba(255,255,255,.3)",fontSize:13,cursor:"pointer"}}>跳过</button>
+      </div>
+
+      {savedLayers.length===0&&(
+        <div style={{background:"#fff",border:"0.5px dashed #e0ddd6",borderRadius:12,padding:"40px",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:12}}>🏗</div>
+          <div style={{fontSize:14,color:"#aaa",marginBottom:8}}>还没有Blocking框架</div>
+          <div style={{fontSize:12,color:"#bbb",lineHeight:1.7,marginBottom:20}}>
+            遇到大项目、容易陷入细节时，用这里强制自己先跑通全流程骨架。<br/>
+            不管是3D动画、代码项目、报告，都先做最简陋的完整版。
+          </div>
+          <button onClick={()=>setShowSetup(true)} style={{padding:"9px 20px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:13,cursor:"pointer"}}>创建第一个框架</button>
+        </div>
+      )}
+
+      {/* Layer selector */}
+      {savedLayers.length>1&&(
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+          {savedLayers.map(l=>(
+            <button key={l.id} onClick={()=>setActiveLayer(l.id)} style={{padding:"5px 12px",borderRadius:20,border:"1.5px solid "+(activeEntry?.id===l.id?"#1a1a1a":"#e0ddd6"),background:activeEntry?.id===l.id?"#1a1a1a":"#fff",color:activeEntry?.id===l.id?"#fff":"#555",fontSize:12,cursor:"pointer"}}>{l.name}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Active framework */}
+      {activeEntry&&(
+        <div>
+          <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:600}}>{activeEntry.name}</div>
+              {activeEntry.goal&&<div style={{fontSize:12,color:"#888",marginTop:2}}>{activeEntry.goal}</div>}
+            </div>
+            <button onClick={()=>{if(confirm("删除这个框架？"))saveLayers(savedLayers.filter(l=>l.id!==activeEntry.id));}} style={{fontSize:11,color:"#bbb",background:"none",border:"none",cursor:"pointer"}}>删除</button>
+          </div>
+
+          {/* The Blocking layers */}
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {activeEntry.layers.map((layer,li)=>{
+              const ph=PHASES.find(p=>p.id===layer.phase)||PHASES[li%4];
+              const layerTasks=tasks.filter(t=>t.title.includes("["+ph.label.replace("层：","/")+"]"));
+              const doneCnt=layerTasks.filter(t=>t.done).length;
+              return(
+                <div key={layer.id} style={{background:ph.bg,border:"0.5px solid "+ph.color+"33",borderRadius:10,overflow:"hidden"}}>
+                  <div onClick={()=>{const updated=savedLayers.map(sl=>sl.id!==activeEntry.id?sl:{...sl,layers:sl.layers.map((la,i)=>i===li?{...la,expanded:!la.expanded}:la)});saveLayers(updated);}}
+                    style={{padding:"10px 14px",display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+                    <span style={{fontSize:13,fontWeight:600,color:ph.color,flex:1}}>{ph.label}</span>
+                    {layerTasks.length>0&&<span style={{fontSize:11,color:ph.color,background:"rgba(255,255,255,.6)",padding:"1px 7px",borderRadius:10}}>{doneCnt}/{layerTasks.length} 完成</span>}
+                    <span style={{fontSize:11,color:ph.color,opacity:.6}}>{ph.desc}</span>
+                    <span style={{fontSize:13,color:ph.color,opacity:.5}}>{layer.expanded?"▲":"▼"}</span>
+                  </div>
+                  {layer.expanded&&(
+                    <div style={{borderTop:"0.5px solid "+ph.color+"22",padding:"10px 14px",display:"flex",flexDirection:"column",gap:6}}>
+                      {layer.phTasks.map((pt,ti)=>{
+                        const inBoard=tasks.some(t=>t.title.includes(pt.title.slice(0,10)));
+                        return(
+                          <div key={ti} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 10px",background:"rgba(255,255,255,.5)",borderRadius:7}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontSize:13,fontWeight:500,color:"#1a1a1a"}}>{pt.title}</div>
+                              {pt.desc&&<div style={{fontSize:11,color:"#666",marginTop:2,lineHeight:1.5}}>{pt.desc}</div>}
+                            </div>
+                            {inBoard
+                              ?<span style={{fontSize:11,color:ph.color,flexShrink:0}}>✓ 已加入</span>
+                              :<button onClick={()=>addPhaseTaskToBoard(layer.phase,pt,activeEntry.id)} style={{fontSize:11,color:ph.color,background:"none",border:"0.5px solid "+ph.color,borderRadius:5,padding:"3px 8px",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>→ 任务板</button>
+                            }
+                          </div>
+                        );
+                      })}
+                      {layer.phTasks.length===0&&<div style={{fontSize:12,color:ph.color,opacity:.6,padding:"4px 0"}}>暂无任务，手动在任务板创建后标记对应阶段</div>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ADHD reminder */}
+          <div style={{marginTop:16,background:"#f7f6f3",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#888",lineHeight:1.7}}>
+            <strong style={{color:"#854F0B"}}>⚠ 防细节陷阱规则：</strong>在第1层（骨架）未完成前，不允许深入第2层的任何细节。如果发现自己在打磨细节，立刻停下，回到当前层级的主线目标。
+          </div>
+        </div>
+      )}
+
+      {/* Setup modal */}
+      {showSetup&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+            <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+              <div style={{fontSize:15,fontWeight:600}}>🏗 创建Blocking框架</div>
+              <div style={{fontSize:12,color:"#888",marginTop:2}}>强制你先建立全局框架，防止陷入细节</div>
+            </div>
+            <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+              <div>
+                <div style={{fontSize:12,color:"#555",marginBottom:4,fontWeight:500}}>项目/任务名称 <span style={{color:"#A32D2D"}}>*</span></div>
+                <input value={projName} onChange={e=>setProjName(e.target.value)} placeholder="例如：3D动画毕业项目、季度汇报PPT" autoFocus
+                  style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+              </div>
+              <div>
+                <div style={{fontSize:12,color:"#555",marginBottom:4,fontWeight:500}}>最终目标是什么？（可选）</div>
+                <input value={projGoal} onChange={e=>setProjGoal(e.target.value)} placeholder="例如：5分钟的完整动画片段，包含角色动作和镜头切换"
+                  style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+              </div>
+              <div style={{background:"#EBF3FB",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#185FA5",lineHeight:1.6}}>
+                AI会自动把这个项目拆成4个层级：骨架→粗略→细化→验收。每个层级的任务可以一键加入专注板。
+              </div>
+            </div>
+            <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
+              <button onClick={()=>setShowSetup(false)} style={{padding:"8px 16px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+              <button onClick={generateBlocking} disabled={!projName||loading} style={{flex:1,padding:"10px",background:projName&&!loading?"#1a1a1a":"#ccc",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:500,cursor:projName&&!loading?"pointer":"default"}}>
+                {loading?"生成中…":geminiKey?"✨ AI生成4层框架":"+ 创建框架（需要AI Key）"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════
+// DAILY CHECKIN: 每日产出打卡
+// ═══════════════════════════════════════════
+function DailyCheckIn({task,onSave,onClose}){
+  const [output,setOutput]=useState(task.checkInOutput||"");
+  const [file,setFile]=useState(null);
+  const [preview,setPreview]=useState(task.checkInPreview||"");
+  const fileRef=useRef();
+
+  // Extract expected output from notes
+  const expectedOutput=task.notes?.match(/✅ 产出要求：(.+)/)?.[1]||"记录今天的产出";
+
+  function handleFile(e){
+    const f=e.target.files[0];
+    if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{setPreview(ev.target.result);setFile(f);};
+    r.readAsDataURL(f);
+  }
+  function save(){
+    onSave(task.id,{
+      checkInOutput:output,
+      checkInPreview:preview,
+      checkInDate:todayStr(),
+      done:true,
+    });
+    onClose();
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:450,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:460,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+        <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
+          <div style={{fontSize:15,fontWeight:600}}>📤 完成打卡</div>
+          <div style={{fontSize:13,color:"#1a1a1a",marginTop:6,fontWeight:500}}>{task.title}</div>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{background:"#EBF3FB",borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:11,color:"#185FA5",fontWeight:600,marginBottom:4}}>今天的产出要求</div>
+            <div style={{fontSize:13,color:"#185FA5"}}>{expectedOutput}</div>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>描述你今天做了什么 / 完成了什么 <span style={{color:"#A32D2D"}}>*</span></div>
+            <textarea value={output} onChange={e=>setOutput(e.target.value)} rows={3}
+              placeholder={"简单说明今天的进展，例如：\n完成了基础骨架，角色可以在场景中移动了"}
+              style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.6,resize:"none"}}/>
+          </div>
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>上传截图/文件（可选）</div>
+            {preview?(
+              <div style={{position:"relative",marginBottom:8}}>
+                {preview.startsWith("data:image")
+                  ?<img src={preview} style={{width:"100%",maxHeight:200,objectFit:"cover",borderRadius:8,border:"0.5px solid #e0ddd6"}}/>
+                  :<div style={{padding:"10px 14px",background:"#f7f6f3",borderRadius:8,fontSize:13}}>📄 {file?.name||"已上传文件"}</div>
+                }
+                <button onClick={()=>{setPreview("");setFile(null);}} style={{position:"absolute",top:6,right:6,width:22,height:22,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:12,lineHeight:"22px",textAlign:"center"}}>✕</button>
+              </div>
+            ):(
+              <button onClick={()=>fileRef.current.click()} style={{width:"100%",padding:"10px",border:"1.5px dashed #e0ddd6",borderRadius:8,background:"#fafafa",fontSize:13,color:"#888",cursor:"pointer"}}>
+                📎 点击上传截图 / 文件
+              </button>
+            )}
+            <input ref={fileRef} type="file" accept="image/*,.pdf,.doc,.docx,.txt,.md" style={{display:"none"}} onChange={handleFile}/>
+          </div>
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
+          <button onClick={onClose} style={{padding:"8px 16px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+          <button onClick={save} disabled={!output.trim()} style={{flex:1,padding:"10px",background:output.trim()?"#0F6E56":"#ccc",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:500,cursor:output.trim()?"pointer":"default"}}>
+            ✓ 打卡完成今天
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -2342,6 +2959,9 @@ function App(){
   const [ghToken,setGhToken]=useState(()=>lsGet("zj_gh_token",""));
   const [gistId,setGistId]=useState(()=>lsGet("zj_gist_id",""));
   const [geminiKey,setGeminiKey]=useState(()=>lsGet("zj_gemini_key",""));
+  // NEW: Block system state
+  const [showBlockBreaker,setShowBlockBreaker]=useState(false);
+  const [checkInTask,setCheckInTask]=useState(null);
   const aiRef=useRef(null);
   const saveTimer=useRef(null);
   const isFirstLoad=useRef(true);
@@ -2501,6 +3121,11 @@ function App(){
     const due=yyyymmdd(new Date(y,m,1));
     addTask({title:text,project:1,due,priority:"normal"});
   }
+  // NEW: save check-in data on a task
+  function saveCheckIn(taskId,checkInData){
+    setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,...checkInData}:t));
+    setCheckInTask(null);
+  }
 
   function handleMigrate(decisions){
     setTasksAndSync(ts=>ts.map(t=>{
@@ -2524,8 +3149,8 @@ function App(){
   const focus=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"||isOverdue(t.due))).slice(0,3);
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
-  const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail};
-  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"weekly",l:"本周计划",i:"📆"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"}];
+  const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask};
+  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"weekly",l:"本周计划",i:"📆"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"},{id:"blocking",l:"全局框架",i:"🏗"}];
 
   return<div style={{display:"flex",height:"100vh",background:"#f7f6f3",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
@@ -2557,6 +3182,14 @@ function App(){
           return(
             <div onClick={()=>setShowReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:dueCount>0?"#185FA5":"#666",cursor:"pointer"}}>
               🔁 笔记复习{dueCount>0&&<span style={{fontSize:11,background:"#185FA5",color:"#fff",borderRadius:10,padding:"1px 6px",marginLeft:4}}>{dueCount}</span>}
+            </div>
+          );
+        })()}
+        {(()=>{
+          const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
+          return(
+            <div onClick={()=>setShowBlockBreaker(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:blockCount>0?"#854F0B":"#666",cursor:"pointer",fontWeight:blockCount>0?500:400}}>
+              🔨 节点拆解{blockCount>0&&<span style={{fontSize:11,background:"#854F0B",color:"#fff",borderRadius:10,padding:"1px 6px",marginLeft:4}}>{blockCount}今日</span>}
             </div>
           );
         })()}
@@ -2592,6 +3225,29 @@ function App(){
       )}
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
         {view==="today"&&<>
+          {/* Block tasks today banner */}
+          {(()=>{
+            const blockToday=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr());
+            if(!blockToday.length)return null;
+            return<div style={{background:"linear-gradient(135deg,#FAEEDA,#FFF5E0)",border:"1.5px solid #f0c070",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <span style={{fontSize:12,fontWeight:700,color:"#854F0B"}}>🔨 今日节点任务 · 完成后必须打卡</span>
+                <span style={{fontSize:11,color:"#854F0B",opacity:.7}}>{blockToday.length}个</span>
+              </div>
+              {blockToday.map(t=>{
+                const micro=t.notes?.match(/📌 今日微任务：(.+)/)?.[1];
+                const output=t.notes?.match(/✅ 产出要求：(.+)/)?.[1];
+                return<div key={t.id} style={{background:"rgba(255,255,255,.6)",borderRadius:7,padding:"8px 10px",marginBottom:4,display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:500,color:"#1a1a1a",marginBottom:2}}>{t.title.replace(/^\[Day \d+\] /,"")}</div>
+                    {micro&&<div style={{fontSize:11,color:"#854F0B"}}>📌 {micro}</div>}
+                    {output&&<div style={{fontSize:11,color:"#0F6E56",marginTop:2}}>📤 {output}</div>}
+                  </div>
+                  <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>打卡</button>
+                </div>;
+              })}
+            </div>;
+          })()}
           {/* Energy level indicator */}
           {(()=>{const e=getEnergyLabel();return(
             <div style={{background:e.bg,border:"0.5px solid "+e.color+"44",borderRadius:8,padding:"8px 14px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -2634,6 +3290,7 @@ function App(){
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
         {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry}/>}
+        {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
           :<>{PROJECTS.map(p=>{const pts=tasks.filter(t=>t.project===p.id);const d=pts.filter(t=>t.done).length;const pct=pts.length?Math.round(d/pts.length*100):0;return<div key={p.id} onClick={()=>setProjView(p)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:12,cursor:"pointer"}}>
@@ -2661,6 +3318,8 @@ function App(){
     {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey}/>}
     {showReview&&<ReviewPanel courses={courses} onUpdateNote={updateCourseNote} onClose={()=>setShowReview(false)}/>}
     {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);ghTokenRef.current=t;gistIdRef.current=id;isFirstLoad.current=false;setTimeout(loadFromGist,100);}}/>}
+    {showBlockBreaker&&<BlockBreaker tasks={tasks} onAddTask={addTask} onUpdateTask={saveDetail} geminiKey={geminiKey} onClose={()=>setShowBlockBreaker(false)}/>}
+    {checkInTask&&<DailyCheckIn task={checkInTask} onSave={saveCheckIn} onClose={()=>setCheckInTask(null)}/>}
 
     {showAdd&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.35)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{background:"#fff",borderRadius:12,padding:24,width:400,boxShadow:"0 8px 40px rgba(0,0,0,.15)"}} className="fade-in">
