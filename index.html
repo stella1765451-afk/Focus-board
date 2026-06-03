@@ -749,21 +749,161 @@ function inlineMarkdown(text){
   return parts.length===1&&typeof parts[0]==="string"?parts[0]:parts;
 }
 
+// ── AI Panel history helpers ──
+const AI_HISTORY_KEY="zj_ai_history";
+function loadAIHistory(){try{return JSON.parse(localStorage.getItem(AI_HISTORY_KEY)||"[]");}catch(e){return[];}}
+function saveAIHistory(h){try{localStorage.setItem(AI_HISTORY_KEY,JSON.stringify(h));}catch(e){}}
+
+// ── External plan importer ──
+// Parses Claude-generated HTML plans (day-card format) or JSON into task arrays
+function parseExternalPlan(content){
+  // Try JSON first
+  try{
+    const clean=content.replace(/```json|```/g,"").trim();
+    const data=JSON.parse(clean);
+    if(Array.isArray(data))return data.map(t=>({
+      title:t.title||t.name||"未命名任务",
+      priority:t.priority||"normal",
+      due:t.due||t.deadline||"",
+      estimate:String(t.estimate||t.minutes||t.mins||""),
+      notes:t.notes||t.desc||t.description||"",
+      subtasks:Array.isArray(t.subtasks)?t.subtasks:Array.isArray(t.steps)?t.steps:[],
+      subtaskDone:Array.isArray(t.subtasks)?t.subtasks.map(()=>false):Array.isArray(t.steps)?t.steps.map(()=>false):[],
+      project:t.project||2,
+    }));
+  }catch(e){}
+
+  // Try Claude HTML plan format (day-card structure)
+  const tasks=[];
+  try{
+    const parser=new DOMParser();
+    const doc=parser.parseFromString(content,"text/html");
+    const dayCards=doc.querySelectorAll(".day-card");
+    if(dayCards.length>0){
+      dayCards.forEach((card,i)=>{
+        const titleEl=card.querySelector(".day-title");
+        const subEl=card.querySelector(".day-sub");
+        const badgeEl=card.querySelector(".badge");
+        const taskEls=card.querySelectorAll(".tasks li");
+        const hwEls=card.querySelectorAll(".hw-tasks li");
+        const timeLabelEl=card.querySelector(".time-label");
+
+        const title=(titleEl?.textContent||"Day "+(i+1)).trim();
+        const sub=(subEl?.textContent||"").trim();
+        const badge=(badgeEl?.textContent||"").trim();
+        // Parse estimate from badge like "2h" "2.5h" "3h"
+        const estMatch=badge.match(/([\d.]+)h/);
+        const estMins=estMatch?Math.round(parseFloat(estMatch[1])*60):"";
+
+        // Reading key points → notes
+        const points=Array.from(taskEls).map(el=>el.textContent.trim()).filter(Boolean);
+        // Homework tasks → subtasks
+        const hw=Array.from(hwEls).map(el=>el.textContent.replace(/^\d+/,"").trim()).filter(Boolean);
+
+        tasks.push({
+          title:"Day "+(i+1)+" "+title,
+          priority:i===0?"urgent":i<2?"today":"normal",
+          due:"",
+          estimate:estMins?String(estMins):"",
+          notes:points.length?"📖 "+sub+"\n\n阅读重点：\n"+points.map(p=>"• "+p).join("\n"):"",
+          subtasks:hw,
+          subtaskDone:hw.map(()=>false),
+          project:2,
+        });
+      });
+      if(tasks.length>0)return tasks;
+    }
+  }catch(e){}
+
+  // Fallback: line-by-line heuristic (markdown / plain text)
+  const lines=content.split("\n").filter(l=>l.trim());
+  const dayBlocks=[];
+  let cur=null;
+  for(const line of lines){
+    const dayMatch=line.match(/^(Day\s*\d+|第\s*[\d一二三四五六七八九十]+\s*[天日])[：:\s—–-]*(.*)/i);
+    if(dayMatch){
+      if(cur)dayBlocks.push(cur);
+      cur={title:dayMatch[0].replace(/^[\*#\s]+/,"").trim(),bullets:[],hw:[]};
+    } else if(cur){
+      const hw=/作业|homework|练习|output|产出/i.test(line);
+      if(/^[\s]*[-•*]\s/.test(line)){
+        const text=line.replace(/^[\s]*[-•*]\s/,"").trim();
+        hw?cur.hw.push(text):cur.bullets.push(text);
+      }
+    }
+  }
+  if(cur)dayBlocks.push(cur);
+  if(dayBlocks.length>0){
+    return dayBlocks.map((b,i)=>({
+      title:b.title,
+      priority:i===0?"urgent":i<2?"today":"normal",
+      due:"",estimate:"",
+      notes:b.bullets.length?"阅读重点：\n"+b.bullets.map(p=>"• "+p).join("\n"):"",
+      subtasks:b.hw,subtaskDone:b.hw.map(()=>false),
+      project:2,
+    }));
+  }
+  return[];
+}
+
 function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask}){
-  const [msgs,setMsgs]=useState([{role:"ai",text:"你好！我可以帮你：\n• 把大任务拆成小步骤\n• 生成今日重点计划\n• 分析图片内容\n• 直接生成任务加入专注板\n\n有什么需要帮忙的？",images:[]}]);
+  // ── history: [{id, name, group, msgs:[{role,text,images}], createdAt}]
+  const [history,setHistory]=useState(()=>loadAIHistory());
+  const [activeConvId,setActiveConvId]=useState(null);
+  const [showHistory,setShowHistory]=useState(false);
+  const [editingName,setEditingName]=useState(null); // conv id being renamed
+  const [editNameVal,setEditNameVal]=useState("");
+
+  const activeConv=history.find(c=>c.id===activeConvId);
+  const msgs=activeConv?.msgs||[{role:"ai",text:"你好！我可以帮你：\n• 把想做的事情一股脑发给我，分析优先级\n• 把大任务拆成每天可执行的步骤\n• 导入外部阅读计划/学习计划\n• 图片分析、直接生成任务\n\n有什么需要帮忙的？",images:[]}];
+
+  function setMsgs(fn){
+    setHistory(h=>{
+      if(!activeConvId){
+        // Auto-create new conversation
+        const newId=Date.now();
+        const newConv={id:newId,name:"新对话",group:"",msgs:typeof fn==="function"?fn([{role:"ai",text:"你好！",images:[]}]):fn,createdAt:todayStr()};
+        const updated=[newConv,...h];
+        saveAIHistory(updated);
+        setActiveConvId(newId);
+        return updated;
+      }
+      const updated=h.map(c=>c.id===activeConvId?{...c,msgs:typeof fn==="function"?fn(c.msgs):fn}:c);
+      saveAIHistory(updated);
+      return updated;
+    });
+  }
+
+  function newConv(){
+    const id=Date.now();
+    const c={id,name:"新对话",group:"",msgs:[{role:"ai",text:"你好！有什么需要帮忙的？",images:[]}],createdAt:todayStr()};
+    setHistory(h=>{const u=[c,...h];saveAIHistory(u);return u;});
+    setActiveConvId(id);
+    setShowHistory(false);
+  }
+  function deleteConv(id){
+    setHistory(h=>{const u=h.filter(c=>c.id!==id);saveAIHistory(u);return u;});
+    if(activeConvId===id)setActiveConvId(null);
+  }
+  function renameConv(id,name){
+    setHistory(h=>{const u=h.map(c=>c.id===id?{...c,name:name||"新对话"}:c);saveAIHistory(u);return u;});
+    setEditingName(null);
+  }
+  function setConvGroup(id,group){
+    setHistory(h=>{const u=h.map(c=>c.id===id?{...c,group}:c);saveAIHistory(u);return u;});
+  }
+  // Group names derived from existing conversations
+  const allGroups=[...new Set(history.map(c=>c.group).filter(Boolean))];
+
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const [showKey,setShowKey]=useState(false);
   const [pendingImgs,setPendingImgs]=useState([]);
-  const [extracting,setExtracting]=useState(null); // msgIndex being extracted
-  const [taskPreview,setTaskPreview]=useState(null); // {msgIndex, tasks:[{title,project,priority,due}], selected:[bool]}
+  const [extracting,setExtracting]=useState(null);
+  const [taskPreview,setTaskPreview]=useState(null);
+  const [showImport,setShowImport]=useState(false); // external plan import modal
   const msgRef=useRef(null);
   const fileRef=useRef(null);
-
-  useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
-  useEffect(()=>{
-    if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆解成具体可执行的步骤："+task.title,task.id,[]);
-  });
 
   function saveKey(k){setApiKey(k);lsSet("zj_gemini_key",k);setShowKey(false);}
 
@@ -917,13 +1057,18 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
   async function extractTasks(msgIndex,text){
     if(!apiKey)return;
     setExtracting(msgIndex);
-    const prompt="从以下学习计划或任务列表中提取任务，按天或阶段组织，返回JSON数组。\n"
+    const prompt="从以下学习计划中提取任务，返回JSON数组。\n"
+      +"每个任务对应一天或一个阶段，格式严格如下：\n"
+      +"{\"title\":\"Day 1 标题\",\"priority\":\"urgent|today|normal\",\"due\":\"\","
+      +"\"estimate\":\"分钟数字符串，如 120 代表2小时\","
+      +"\"notes\":\"当天的阅读重点/学习要点，每条用•开头\","
+      +"\"subtasks\":[\"作业1完整描述\",\"作业2完整描述\"]}\n\n"
       +"规则：\n"
-      +"1. 每个任务对应一天或一个阶段（如'第一天''Day 1''第一阶段'），不要把每个小点拆成单独任务\n"
-      +"2. 该天/阶段下的具体内容放入subtasks数组（每项是字符串）\n"
-      +"3. 如果内容不是按天/阶段组织的，则按主题归并，最多10个任务\n"
-      +"4. 每个条目格式：{\"title\":\"任务标题（如：Day 1 基础与光源）\",\"priority\":\"normal\",\"due\":\"\",\"subtasks\":[\"子步骤1\",\"子步骤2\"]}\n"
-      +"5. 只返回JSON数组，不要其他内容\n\n"
+      +"1. estimate：从时间标记提取，1h=60，2h=120，2.5h=150，只填数字字符串\n"
+      +"2. notes：填该天的阅读重点/学习要点，不是作业\n"
+      +"3. subtasks：只填作业/练习/每日产出的内容，每条保留完整描述\n"
+      +"4. 第1天priority=urgent，第2-3天today，其余normal\n"
+      +"5. 只返回JSON数组，不要其他文字\n\n"
       +"内容：\n"+text;
     try{
       const reply=await callGemini(apiKey,[{parts:[{text:prompt}]}]);
@@ -936,6 +1081,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
             title:t.title||"",
             priority:t.priority||"normal",
             due:t.due||"",
+            estimate:String(t.estimate||""),
+            notes:t.notes||"",
             project:2,
             subtasks:Array.isArray(t.subtasks)?t.subtasks:[],
             subtaskDone:Array.isArray(t.subtasks)?t.subtasks.map(()=>false):[],
@@ -943,9 +1090,7 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
           selected:parsed.map(()=>true)
         });
       }
-    }catch(e){
-      console.error("Extract failed:",e);
-    }
+    }catch(e){console.error("Extract failed:",e);}
     setExtracting(null);
   }
 
@@ -989,17 +1134,81 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
     setLoading(false);
   }
 
+  useEffect(()=>{if(msgRef.current)msgRef.current.scrollTop=9999;},[msgs]);
+  useEffect(()=>{
+    if(sendRef)sendRef.current=(task)=>doSend("帮我把这个任务拆解成具体可执行的步骤："+task.title,task.id,[]);
+  });
+
   if(!open)return null;
+
+  // ── History sidebar panel ──
+  if(showHistory) return(
+    <div style={{position:"fixed",right:0,top:0,height:"100%",width:"min(580px,100vw)",background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 24px rgba(0,0,0,.1)"}}>
+      <div style={{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+        <button onClick={()=>setShowHistory(false)} style={{fontSize:13,color:"#666",background:"none",border:"none",cursor:"pointer"}}>← 返回</button>
+        <span style={{fontSize:14,fontWeight:500,flex:1}}>历史对话</span>
+        <button onClick={newConv} style={{fontSize:12,background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",cursor:"pointer"}}>+ 新对话</button>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"10px 12px"}}>
+        {history.length===0&&<div style={{fontSize:13,color:"#bbb",textAlign:"center",padding:"40px 0"}}>还没有历史对话</div>}
+        {allGroups.map(g=>(
+          <div key={g} style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6,padding:"0 4px"}}>{g}</div>
+            {history.filter(c=>c.group===g).map(c=>(
+              <ConvItem key={c.id} conv={c} active={activeConvId===c.id} onSelect={()=>{setActiveConvId(c.id);setShowHistory(false);}}
+                onDelete={()=>deleteConv(c.id)} onRename={(v)=>renameConv(c.id,v)}
+                onSetGroup={(gv)=>setConvGroup(c.id,gv)} allGroups={allGroups}/>
+            ))}
+          </div>
+        ))}
+        {history.filter(c=>!c.group).length>0&&(
+          <div>
+            <div style={{fontSize:11,color:"#aaa",fontWeight:600,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6,padding:"0 4px"}}>未分组</div>
+            {history.filter(c=>!c.group).map(c=>(
+              <ConvItem key={c.id} conv={c} active={activeConvId===c.id} onSelect={()=>{setActiveConvId(c.id);setShowHistory(false);}}
+                onDelete={()=>deleteConv(c.id)} onRename={(v)=>renameConv(c.id,v)}
+                onSetGroup={(gv)=>setConvGroup(c.id,gv)} allGroups={allGroups}/>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Import modal ──
+  if(showImport) return(
+    <ImportPlanModal onClose={()=>setShowImport(false)} onImport={(parsed)=>{
+      setTaskPreview({msgIndex:-1,tasks:parsed,selected:parsed.map(()=>true)});
+      setShowImport(false);
+    }}/>
+  );
+
   return(
     <div style={{position:"fixed",right:0,top:0,height:"100%",width:"min(580px,100vw)",background:"#fff",borderLeft:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",zIndex:100,boxShadow:"-4px 0 24px rgba(0,0,0,.1)"}}>
-      <div style={{padding:"14px 16px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-        <span style={{fontSize:14,fontWeight:500}}>✨ AI助手 <span style={{fontSize:11,color:"#aaa"}}>Gemini</span></span>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <button onClick={openNewWin} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}}>⬡ 新窗口</button>
-          <button onClick={()=>setShowKey(v=>!v)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}}>{apiKey?"🔑 已设置":"🔑 设置Key"}</button>
-          <button onClick={onClose} style={{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"4px 9px",cursor:"pointer"}}>✕</button>
-        </div>
+      {/* Header */}
+      <div style={{padding:"12px 14px",borderBottom:"0.5px solid #e0ddd6",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+        <span style={{fontSize:14,fontWeight:500,flex:1}}>✨ AI助手</span>
+        <button onClick={()=>setShowImport(true)} title="导入外部计划" style={{fontSize:11,border:"0.5px solid #ccc",background:"#f7f6f3",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#555"}}>📥 导入计划</button>
+        <button onClick={()=>setShowHistory(true)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}}>🗂 历史{history.length>0?" ("+history.length+")":""}</button>
+        <button onClick={newConv} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:"#666"}}>+ 新对话</button>
+        <button onClick={()=>setShowKey(v=>!v)} style={{fontSize:11,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",color:apiKey?"#0F6E56":"#cc6600"}}>{apiKey?"🔑":"🔑 设置"}</button>
+        <button onClick={onClose} style={{fontSize:12,border:"0.5px solid #ccc",background:"none",borderRadius:5,padding:"4px 9px",cursor:"pointer"}}>✕</button>
       </div>
+
+      {/* Conv name bar */}
+      {activeConv&&(
+        <div style={{padding:"6px 14px",borderBottom:"0.5px solid #f0ede8",background:"#fafaf8",display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+          <input value={activeConv.name} onChange={e=>renameConv(activeConvId,e.target.value)}
+            style={{flex:1,fontSize:12,border:"none",background:"transparent",outline:"none",color:"#555",fontWeight:500}}
+            placeholder="对话名称（点击编辑）"/>
+          <select value={activeConv.group||""} onChange={e=>setConvGroup(activeConvId,e.target.value)}
+            style={{fontSize:11,border:"0.5px solid #e0ddd6",borderRadius:4,padding:"2px 4px",color:"#888",background:"transparent"}}>
+            <option value="">无分组</option>
+            {allGroups.map(g=><option key={g} value={g}>{g}</option>)}
+            <option value="__new__">＋ 新建分组…</option>
+          </select>
+        </div>
+      )}
 
       {showKey&&(
         <div style={{padding:12,background:"#fffbe6",borderBottom:"0.5px solid #e8e0c0",flexShrink:0}}>
@@ -1009,8 +1218,36 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
             <button onClick={()=>saveKey(document.getElementById("gkey").value.trim())} style={{fontSize:12,padding:"6px 10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:5,cursor:"pointer"}}>保存</button>
           </div>
           <div style={{fontSize:11,color:"#999",marginTop:6,lineHeight:1.7}}>
-            免费Key：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a> → 选 Gemini 2.5 Flash<br/>
-            付费Key同样支持 · 自动尝试：2.5-flash → 2.0-flash → 1.5-flash
+            免费Key：<a href="https://aistudio.google.com/app/apikey" target="_blank" style={{color:"#185FA5"}}>aistudio.google.com</a> → 选 Gemini 2.5 Flash
+          </div>
+        </div>
+      )}
+
+      {/* Import preview (when coming from import modal) */}
+      {taskPreview&&taskPreview.msgIndex===-1&&(
+        <div style={{padding:"12px 14px",borderBottom:"0.5px solid #e0ddd6",background:"#EBF3FB",flexShrink:0}}>
+          <div style={{fontSize:12,fontWeight:500,color:"#185FA5",marginBottom:8}}>📥 导入预览 — 选择要加入的任务：</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:200,overflowY:"auto",marginBottom:8}}>
+            {taskPreview.tasks.map((t,ti)=>(
+              <label key={ti} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 8px",borderRadius:6,background:taskPreview.selected[ti]?"rgba(24,95,165,.1)":"rgba(255,255,255,.6)",cursor:"pointer"}}>
+                <input type="checkbox" checked={taskPreview.selected[ti]} onChange={()=>setTaskPreview(p=>({...p,selected:p.selected.map((s,j)=>j===ti?!s:s)}))} style={{marginTop:2,flexShrink:0}}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,fontWeight:500}}>{t.title}</div>
+                  <div style={{fontSize:11,color:"#666",marginTop:1}}>
+                    {t.estimate&&<span>⏱ {t.estimate}分钟</span>}
+                    {t.subtasks?.length>0&&<span style={{marginLeft:8}}>📋 {t.subtasks.length}个作业</span>}
+                    {t.notes&&<span style={{marginLeft:8}}>📝 有学习重点</span>}
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <span style={{fontSize:11,color:"#185FA5",flex:1}}>{taskPreview.selected.filter(Boolean).length}/{taskPreview.tasks.length} 已选</span>
+            <button onClick={()=>setTaskPreview(null)} style={{fontSize:12,color:"#888",background:"none",border:"none",cursor:"pointer"}}>取消</button>
+            <button onClick={confirmAddTasks} disabled={!taskPreview.selected.some(Boolean)} style={{fontSize:12,fontWeight:500,color:"#fff",background:"#185FA5",border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer"}}>
+              加入专注板 ({taskPreview.selected.filter(Boolean).length})
+            </button>
           </div>
         </div>
       )}
@@ -1030,12 +1267,9 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
                 </div>
                 {m.role==="ai"&&hasTaskContent(m.text)&&taskPreview?.msgIndex!==i&&(
                   <div style={{padding:"6px 12px 10px",borderTop:"0.5px solid #e8e5e0"}}>
-                    <button
-                      onClick={()=>extractTasks(i,m.text)}
-                      disabled={extracting===i}
-                      style={{fontSize:12,color:"#185FA5",background:"#EBF3FB",border:"0.5px solid #B5D4F4",borderRadius:6,padding:"5px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}
-                    >
-                      {extracting===i?"⏳ 提取中…":"📋 提取为任务，加入专注板"}
+                    <button onClick={()=>extractTasks(i,m.text)} disabled={extracting===i}
+                      style={{fontSize:12,color:"#185FA5",background:"#EBF3FB",border:"0.5px solid #B5D4F4",borderRadius:6,padding:"5px 12px",cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+                      {extracting===i?"⏳ 提取中…":"📋 提取为任务（含时长+重点+作业）"}
                     </button>
                   </div>
                 )}
@@ -1048,18 +1282,16 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
                           <input type="checkbox" checked={taskPreview.selected[ti]} onChange={()=>setTaskPreview(p=>({...p,selected:p.selected.map((s,j)=>j===ti?!s:s)}))} style={{marginTop:2,flexShrink:0}}/>
                           <div style={{flex:1}}>
                             <div style={{fontSize:12,color:"#1a1a1a",lineHeight:1.4,fontWeight:500}}>{t.title}</div>
+                            {t.estimate&&<div style={{fontSize:11,color:"#854F0B",marginTop:1}}>⏱ {t.estimate}分钟</div>}
+                            {t.notes&&<div style={{fontSize:11,color:"#0F6E56",marginTop:1}}>📝 有学习重点</div>}
                             {t.subtasks&&t.subtasks.length>0&&(
-                              <div style={{fontSize:11,color:"#666",marginTop:3,lineHeight:1.5}}>
-                                {t.subtasks.slice(0,3).map((s,si)=>(
-                                  <div key={si} style={{paddingLeft:8}}>· {s}</div>
+                              <div style={{fontSize:11,color:"#666",marginTop:2,lineHeight:1.5}}>
+                                {t.subtasks.slice(0,2).map((s,si)=>(
+                                  <div key={si} style={{paddingLeft:8}}>· {s.length>40?s.slice(0,40)+"…":s}</div>
                                 ))}
-                                {t.subtasks.length>3&&<div style={{paddingLeft:8,color:"#aaa"}}>+{t.subtasks.length-3}个步骤</div>}
+                                {t.subtasks.length>2&&<div style={{paddingLeft:8,color:"#aaa"}}>+{t.subtasks.length-2}个作业</div>}
                               </div>
                             )}
-                            <div style={{fontSize:11,color:"#aaa",marginTop:2}}>
-                              {PROJECTS.find(p=>p.id===t.project)?.name}
-                              {t.due&&<span style={{marginLeft:6}}>📅{t.due}</span>}
-                            </div>
                           </div>
                         </label>
                       ))}
@@ -1067,11 +1299,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
                       <span style={{fontSize:11,color:"#aaa",flex:1}}>{taskPreview.selected.filter(Boolean).length}/{taskPreview.tasks.length} 已选</span>
                       <button onClick={()=>setTaskPreview(null)} style={{fontSize:12,color:"#888",background:"none",border:"none",cursor:"pointer"}}>取消</button>
-                      <button
-                        onClick={confirmAddTasks}
-                        disabled={!taskPreview.selected.some(Boolean)}
-                        style={{fontSize:12,fontWeight:500,color:"#fff",background:"#1a1a1a",border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer"}}
-                      >
+                      <button onClick={confirmAddTasks} disabled={!taskPreview.selected.some(Boolean)}
+                        style={{fontSize:12,fontWeight:500,color:"#fff",background:"#1a1a1a",border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer"}}>
                         加入专注板 ({taskPreview.selected.filter(Boolean).length})
                       </button>
                     </div>
@@ -1096,9 +1325,7 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
       )}
 
       <div style={{padding:"10px 12px",borderTop:"0.5px solid #e0ddd6",display:"flex",flexDirection:"column",gap:8,flexShrink:0,background:"#fff"}}>
-        <textarea
-          value={input}
-          onChange={e=>setInput(e.target.value)}
+        <textarea value={input} onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();if(input.trim()||pendingImgs.length)doSend(input);}}}
           placeholder="输入消息… (Enter发送，Shift+Enter换行)"
           rows={2}
@@ -1108,15 +1335,178 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
           <button onClick={()=>fileRef.current.click()} style={{padding:"6px 12px",border:"0.5px solid #ccc",background:"#f7f6f3",borderRadius:6,fontSize:12,cursor:"pointer",color:"#555",flexShrink:0}}>📎 图片</button>
           <input ref={fileRef} type="file" accept="image/*" multiple style={{display:"none"}} onChange={handleFile}/>
           <span style={{flex:1,fontSize:11,color:"#ccc"}}>支持截图分析</span>
-          <button
-            onClick={()=>doSend(input)}
-            disabled={loading||(!input.trim()&&!pendingImgs.length)}
-            style={{padding:"7px 22px",background:loading?"#ccc":"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:loading?"default":"pointer",fontWeight:500,flexShrink:0}}
-          >发送</button>
+          <button onClick={()=>doSend(input)} disabled={loading||(!input.trim()&&!pendingImgs.length)}
+            style={{padding:"7px 22px",background:loading?"#ccc":"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:loading?"default":"pointer",fontWeight:500,flexShrink:0}}>发送</button>
         </div>
       </div>
     </div>
   );
+}
+
+// ── ConvItem: history list item ──
+function ConvItem({conv,active,onSelect,onDelete,onRename,onSetGroup,allGroups}){
+  const [editing,setEditing]=useState(false);
+  const [val,setVal]=useState(conv.name);
+  const [showGroup,setShowGroup]=useState(false);
+  const [newGrp,setNewGrp]=useState("");
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 8px",borderRadius:7,marginBottom:3,background:active?"#EBF3FB":"transparent",cursor:"pointer"}} onClick={onSelect}>
+      {editing?(
+        <input autoFocus value={val} onChange={e=>setVal(e.target.value)}
+          onBlur={()=>{onRename(val);setEditing(false);}}
+          onKeyDown={e=>{if(e.key==="Enter"){onRename(val);setEditing(false);}}}
+          onClick={e=>e.stopPropagation()}
+          style={{flex:1,fontSize:12,padding:"2px 6px",border:"0.5px solid #ccc",borderRadius:4,outline:"none"}}/>
+      ):(
+        <span style={{flex:1,fontSize:13,color:active?"#185FA5":"#333",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{conv.name}</span>
+      )}
+      <span style={{fontSize:10,color:"#bbb",flexShrink:0}}>{conv.createdAt}</span>
+      <button onClick={e=>{e.stopPropagation();setEditing(true);setVal(conv.name);}} style={{fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",flexShrink:0}}>✏</button>
+      <button onClick={e=>{e.stopPropagation();setShowGroup(v=>!v);}} style={{fontSize:11,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",flexShrink:0}}>🗂</button>
+      <button onClick={e=>{e.stopPropagation();if(confirm("删除这条对话记录？"))onDelete();}} style={{fontSize:11,color:"#bbb",background:"none",border:"none",cursor:"pointer",padding:"2px 4px",flexShrink:0}}>✕</button>
+      {showGroup&&(
+        <div style={{position:"absolute",right:60,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"8px 10px",boxShadow:"0 4px 16px rgba(0,0,0,.1)",zIndex:200,minWidth:160}} onClick={e=>e.stopPropagation()}>
+          <div style={{fontSize:11,color:"#aaa",marginBottom:6}}>移动到分组</div>
+          {allGroups.map(g=><div key={g} onClick={()=>{onSetGroup(g);setShowGroup(false);}} style={{fontSize:12,padding:"4px 8px",borderRadius:4,cursor:"pointer",color:"#333"}}>{g}</div>)}
+          <div style={{display:"flex",gap:4,marginTop:6}}>
+            <input value={newGrp} onChange={e=>setNewGrp(e.target.value)} placeholder="新建分组名" style={{flex:1,fontSize:11,padding:"3px 6px",border:"0.5px solid #ccc",borderRadius:4}}/>
+            <button onClick={()=>{if(newGrp.trim()){onSetGroup(newGrp.trim());setShowGroup(false);}}} style={{fontSize:11,padding:"3px 8px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:4,cursor:"pointer"}}>＋</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Import Plan Modal ──
+function ImportPlanModal({onClose,onImport}){
+  const [tab,setTab]=useState("paste"); // paste | file | format
+  const [text,setText]=useState("");
+  const [parsed,setParsed]=useState(null);
+  const [err,setErr]=useState("");
+  const fileRef=useRef();
+
+  function tryParse(content){
+    setErr("");
+    const result=parseExternalPlan(content);
+    if(result.length>0){setParsed(result);}
+    else{setErr("无法识别格式，请查看「格式说明」或手动粘贴JSON");}
+  }
+  function handleFile(e){
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{setText(ev.target.result);tryParse(ev.target.result);};
+    r.readAsText(f,"utf-8");
+  }
+
+  const FORMAT_SPEC=`// 专注板通用导入格式（JSON数组）
+[
+  {
+    "title": "Day 1 传统与光源",
+    "priority": "urgent",
+    "due": "2026-06-10",
+    "estimate": "120",      // 分钟，字符串
+    "notes": "• 阅读重点1\n• 阅读重点2",
+    "subtasks": [           // 每日作业，每条完整描述
+      "作业1：画一个球体标注五个调子",
+      "作业2：找一幅大师画分析光源"
+    ],
+    "project": 2            // 1=工作 2=个人成长 3=健康
+  }
+]
+
+// 让Claude生成此格式的提示词示例：
+// "帮我生成《Color and Light》5天阅读计划，
+//  以JSON数组返回，每天包含：
+//  title/priority/estimate（分钟）/notes（阅读重点）/subtasks（作业列表）"`;
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+        <div style={{padding:"16px 20px 12px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:600}}>📥 导入外部计划</div>
+            <div style={{fontSize:12,color:"#888",marginTop:2}}>把Claude/GPT生成的学习计划直接导入专注板</div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+
+        <div style={{display:"flex",gap:0,borderBottom:"0.5px solid #e0ddd6",flexShrink:0}}>
+          {[["paste","粘贴内容"],["file","上传文件"],["format","格式说明"]].map(([id,l])=>(
+            <button key={id} onClick={()=>setTab(id)} style={{padding:"8px 16px",fontSize:13,background:"none",border:"none",cursor:"pointer",color:tab===id?"#1a1a1a":"#888",borderBottom:tab===id?"2px solid #1a1a1a":"2px solid transparent",fontWeight:tab===id?500:400}}>{l}</button>
+          ))}
+        </div>
+
+        <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+          {tab==="paste"&&(
+            <div>
+              <div style={{fontSize:12,color:"#555",marginBottom:6}}>支持格式：JSON数组、Claude生成的HTML计划、Markdown日程</div>
+              <textarea value={text} onChange={e=>setText(e.target.value)} rows={10}
+                placeholder={"粘贴JSON数组、HTML计划或Markdown文本…
+
+例如让Claude生成：
+帮我制定3天Python学习计划，返回JSON格式，包含每天的标题、时长（estimate，分钟）、学习重点（notes，•开头）和作业（subtasks数组）"}
+                style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:12,lineHeight:1.7,fontFamily:"monospace"}}/>
+              {err&&<div style={{fontSize:12,color:"#A32D2D",marginTop:6}}>{err}</div>}
+              {parsed&&(
+                <div style={{marginTop:10,background:"#E1F5EE",borderRadius:8,padding:"10px 14px"}}>
+                  <div style={{fontSize:12,color:"#0F6E56",fontWeight:500,marginBottom:4}}>✓ 解析成功：{parsed.length} 个任务</div>
+                  {parsed.slice(0,3).map((t,i)=>(
+                    <div key={i} style={{fontSize:12,color:"#333",padding:"3px 0"}}>
+                      {t.title}{t.estimate?" ("+t.estimate+"分钟)":""}{t.subtasks?.length?" · "+t.subtasks.length+"个作业":""}
+                    </div>
+                  ))}
+                  {parsed.length>3&&<div style={{fontSize:11,color:"#888"}}>+{parsed.length-3}个任务…</div>}
+                </div>
+              )}
+              <button onClick={()=>tryParse(text)} disabled={!text.trim()} style={{marginTop:10,width:"100%",padding:"9px",background:text.trim()?"#1a1a1a":"#ccc",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:text.trim()?"pointer":"default",fontWeight:500}}>
+                解析内容
+              </button>
+            </div>
+          )}
+          {tab==="file"&&(
+            <div style={{textAlign:"center",padding:"20px 0"}}>
+              <div style={{fontSize:13,color:"#555",marginBottom:16}}>上传 .html / .json / .md / .txt 文件</div>
+              <button onClick={()=>fileRef.current.click()} style={{padding:"12px 24px",border:"1.5px dashed #ccc",borderRadius:10,background:"#f7f6f3",fontSize:14,color:"#555",cursor:"pointer"}}>
+                📁 选择文件
+              </button>
+              <input ref={fileRef} type="file" accept=".html,.json,.md,.txt" style={{display:"none"}} onChange={handleFile}/>
+              {parsed&&(
+                <div style={{marginTop:16,background:"#E1F5EE",borderRadius:8,padding:"10px 14px",textAlign:"left"}}>
+                  <div style={{fontSize:12,color:"#0F6E56",fontWeight:500,marginBottom:4}}>✓ 解析成功：{parsed.length} 个任务</div>
+                  {parsed.map((t,i)=><div key={i} style={{fontSize:12,color:"#333",padding:"2px 0"}}>{t.title}</div>)}
+                </div>
+              )}
+              {err&&<div style={{fontSize:12,color:"#A32D2D",marginTop:10}}>{err}</div>}
+            </div>
+          )}
+          {tab==="format"&&(
+            <div>
+              <div style={{fontSize:12,color:"#555",marginBottom:10,lineHeight:1.7}}>
+                让Claude/ChatGPT生成以下格式，即可一键导入专注板。<br/>
+                也支持直接上传Claude Artifact生成的HTML计划文件。
+              </div>
+              <pre style={{fontSize:11,background:"#f7f6f3",borderRadius:8,padding:"12px 14px",overflowX:"auto",lineHeight:1.7,color:"#333",whiteSpace:"pre-wrap"}}>{FORMAT_SPEC}</pre>
+              <div style={{marginTop:12,background:"#EBF3FB",borderRadius:8,padding:"10px 14px",fontSize:12,color:"#185FA5",lineHeight:1.7}}>
+                <strong>快速提示词：</strong><br/>
+                "帮我制定[X天][课程名]学习计划，以JSON数组返回，每天包含：title（Day N 标题）、priority、estimate（分钟数字符串）、notes（学习重点，•开头多行）、subtasks（作业列表数组）、project（数字2）"
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{padding:"12px 20px",borderTop:"0.5px solid #e0ddd6",display:"flex",gap:8}}>
+          <button onClick={onClose} style={{padding:"8px 16px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>取消</button>
+          <button onClick={()=>{if(parsed)onImport(parsed);}} disabled={!parsed}
+            style={{flex:1,padding:"10px",background:parsed?"#0F6E56":"#ccc",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:500,cursor:parsed?"pointer":"default"}}>
+            ✓ 导入 {parsed?"("+parsed.length+"个任务)":""}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 }
 
 function SettingsPanel({onClose,onSynced}){
