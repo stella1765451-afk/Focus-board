@@ -251,6 +251,183 @@ const SAMPLE_TASKS=[
 /* ═══════════════════════════════════════════
    TINY UI COMPONENTS
 ═══════════════════════════════════════════ */
+
+// ══════════════════════════════════════════
+// §PRACTICE_CHECKIN  临摹打卡 / 速写打卡
+// ══════════════════════════════════════════
+
+// 临摹打卡弹窗：上传参考图 + 作品，并排对比
+function CopyStudyCheckIn({assignment,onSave,onClose}){
+  const [workImg,setWorkImg]=useState(null);
+  const [note,setNote]=useState("");
+  const fileRef=useRef();
+  function readImg(file,cb){const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(file);}
+  function handleWork(e){const f=e.target.files[0];if(f)readImg(f,d=>setWorkImg(d));e.target.value="";}
+  function save(){
+    if(!workImg){alert("请上传临摹作品");return;}
+    const sub={id:Date.now(),date:todayStr(),image:workImg,note:note.trim()};
+    onSave(sub);
+    onClose();
+  }
+  const refImg=assignment.refImage||null;
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:560,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,.25)"}}>
+        <div style={{padding:"16px 20px 12px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:600}}>🎨 临摹打卡</div>
+            <div style={{fontSize:12,color:"#888",marginTop:2}}>{assignment.title}</div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* 对比区 */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            {/* 参考图 */}
+            <div>
+              <div style={{fontSize:11,color:"#aaa",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:".04em"}}>参考图</div>
+              {refImg?(
+                <img src={refImg} style={{width:"100%",aspectRatio:"1",objectFit:"cover",borderRadius:8,border:"0.5px solid #e0ddd6"}}/>
+              ):(
+                <div style={{width:"100%",aspectRatio:"1",borderRadius:8,border:"1.5px dashed #e0ddd6",display:"flex",alignItems:"center",justifyContent:"center",background:"#fafafa",fontSize:12,color:"#ccc",flexDirection:"column",gap:4}}>
+                  <span>无参考图</span>
+                  <span style={{fontSize:10}}>(在作业编辑中上传)</span>
+                </div>
+              )}
+            </div>
+            {/* 作品上传 */}
+            <div>
+              <div style={{fontSize:11,color:"#aaa",fontWeight:600,marginBottom:6,textTransform:"uppercase",letterSpacing:".04em"}}>我的作品 <span style={{color:"#A32D2D"}}>*</span></div>
+              {workImg?(
+                <div style={{position:"relative"}}>
+                  <img src={workImg} style={{width:"100%",aspectRatio:"1",objectFit:"cover",borderRadius:8,border:"0.5px solid #e0ddd6"}}/>
+                  <button onClick={()=>setWorkImg(null)} style={{position:"absolute",top:4,right:4,width:20,height:20,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:11,lineHeight:"20px",textAlign:"center"}}>✕</button>
+                </div>
+              ):(
+                <div onClick={()=>fileRef.current.click()} style={{width:"100%",aspectRatio:"1",borderRadius:8,border:"1.5px dashed #185FA5",display:"flex",alignItems:"center",justifyContent:"center",background:"#EBF3FB",cursor:"pointer",flexDirection:"column",gap:4}}>
+                  <span style={{fontSize:20}}>📷</span>
+                  <span style={{fontSize:12,color:"#185FA5",fontWeight:500}}>上传作品</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleWork} style={{display:"none"}}/>
+          {/* 备注 */}
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>这次临摹学到了什么？（可选）</div>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2}
+              placeholder={"例如：暗部用的是偏冷的蓝紫色，高光边缘有环境反光…"}
+              style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.6,resize:"none"}}/>
+          </div>
+          {/* 历史提交 */}
+          {(assignment.submissions||[]).length>0&&(
+            <div>
+              <div style={{fontSize:12,color:"#aaa",marginBottom:6}}>历史提交 ({assignment.submissions.length}次)</div>
+              <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
+                {[...(assignment.submissions||[])].reverse().slice(0,6).map(s=>(
+                  <div key={s.id} style={{flexShrink:0,width:52}}>
+                    <img src={s.image} style={{width:52,height:52,objectFit:"cover",borderRadius:6,border:"0.5px solid #e0ddd6"}}/>
+                    <div style={{fontSize:10,color:"#aaa",textAlign:"center",marginTop:2}}>{s.date?.slice(5)||""}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <button onClick={save} style={{width:"100%",padding:"12px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            ✓ 打卡完成
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 速写打卡弹窗：快速计次 + 可选上传
+function SketchCheckIn({assignment,onSave,onClose}){
+  const [duration,setDuration]=useState(10);
+  const [imgs,setImgs]=useState([]);
+  const [note,setNote]=useState("");
+  const fileRef=useRef();
+  const done=(assignment.submissions||[]).length;
+  const target=assignment.targetCount||10;
+  function readImg(file,cb){const r=new FileReader();r.onload=e=>cb(e.target.result);r.readAsDataURL(file);}
+  function handleFiles(e){
+    Array.from(e.target.files).forEach(f=>readImg(f,d=>setImgs(prev=>[...prev,{id:Date.now()+Math.random(),data:d}])));
+    e.target.value="";
+  }
+  function save(){
+    const sub={id:Date.now(),date:todayStr(),duration:duration,images:imgs.map(i=>i.data),note:note.trim(),count:Math.max(1,imgs.length)};
+    onSave(sub);
+    onClose();
+  }
+  const DURATIONS=[2,5,10,15,30];
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:420,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,.25)"}}>
+        <div style={{padding:"16px 20px 12px",borderBottom:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:600}}>✏️ 速写打卡</div>
+            <div style={{fontSize:12,color:"#888",marginTop:2}}>{assignment.title}</div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:"#aaa",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* 进度环 */}
+          <div style={{display:"flex",alignItems:"center",gap:14,padding:"12px 16px",background:"#F5F8FF",borderRadius:10}}>
+            <div style={{position:"relative",width:56,height:56,flexShrink:0}}>
+              <svg width="56" height="56" style={{transform:"rotate(-90deg)"}}>
+                <circle cx="28" cy="28" r="22" fill="none" stroke="#E0E8FF" strokeWidth="5"/>
+                <circle cx="28" cy="28" r="22" fill="none" stroke="#185FA5" strokeWidth="5"
+                  strokeDasharray={`${Math.min((done+1)/target,1)*138.2} 138.2`} strokeLinecap="round"/>
+              </svg>
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#185FA5"}}>{done+1}</div>
+            </div>
+            <div>
+              <div style={{fontSize:14,fontWeight:600,color:"#1a1a1a"}}>第 {done+1} 张</div>
+              <div style={{fontSize:12,color:"#888"}}>目标：{target} 张，已完成 {done} 张</div>
+            </div>
+          </div>
+          {/* 每张时长 */}
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:8,fontWeight:500}}>这次每张用时</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {DURATIONS.map(d=>(
+                <button key={d} onClick={()=>setDuration(d)}
+                  style={{padding:"6px 14px",borderRadius:20,border:`1.5px solid ${duration===d?"#185FA5":"#e0ddd6"}`,background:duration===d?"#185FA5":"transparent",color:duration===d?"#fff":"#555",fontSize:13,cursor:"pointer",fontWeight:duration===d?600:400}}>
+                  {d}分钟
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* 上传速写（可选） */}
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:8,fontWeight:500}}>上传速写（可选，可多张）</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
+              {imgs.map((img,i)=>(
+                <div key={img.id} style={{position:"relative",width:60}}>
+                  <img src={img.data} style={{width:60,height:60,objectFit:"cover",borderRadius:6,border:"0.5px solid #e0ddd6"}}/>
+                  <button onClick={()=>setImgs(prev=>prev.filter((_,j)=>j!==i))} style={{position:"absolute",top:-4,right:-4,width:16,height:16,borderRadius:"50%",background:"#A32D2D",color:"#fff",border:"none",cursor:"pointer",fontSize:10,lineHeight:"16px",textAlign:"center"}}>✕</button>
+                </div>
+              ))}
+              <div onClick={()=>fileRef.current.click()} style={{width:60,height:60,borderRadius:6,border:"1.5px dashed #ccc",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"#ccc",fontSize:22,background:"#fafafa"}}>+</div>
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFiles} style={{display:"none"}}/>
+          </div>
+          {/* 备注 */}
+          <div>
+            <div style={{fontSize:12,color:"#555",marginBottom:6,fontWeight:500}}>备注（可选）</div>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2}
+              placeholder={"今天画的主题、遇到的问题…"}
+              style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,resize:"none"}}/>
+          </div>
+          <button onClick={save} style={{width:"100%",padding:"12px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer"}}>
+            ✓ 完成 {imgs.length>1?imgs.length+"张速写":"这张速写"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 // ══════════════════════════════════════════
 // §BASE_UI  基础UI组件 Check/Tag/TaskRow/TaskDetail
 // ══════════════════════════════════════════
@@ -2081,6 +2258,9 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddP
   const [focusEp,setFocusEp]=useState(null);
   const [showAssign,setShowAssign]=useState(false);
   const [newAssign,setNewAssign]=useState("");
+  const [newAssignType,setNewAssignType]=useState("normal"); // normal | copy_study | sketch
+  const [newAssignTarget,setNewAssignTarget]=useState(10);
+  const [showPracticeCheckIn,setShowPracticeCheckIn]=useState(null); // assignment object
   const donePct=course.episodes.length?Math.round(course.episodes.filter(e=>e.status==="done").length/course.episodes.length*100):0;
   const nextEp=course.episodes.find(e=>e.status==="todo"||e.status==="doing");
   const daysSinceStudy=daysSince(course.lastStudied);
@@ -2106,9 +2286,30 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddP
   }
   function addAssignment(){
     if(!newAssign.trim())return;
-    const a={id:Date.now(),title:newAssign.trim(),status:"todo",due:""};
+    const a={id:Date.now(),title:newAssign.trim(),status:"todo",due:"",type:newAssignType,
+      ...(newAssignType==="sketch"?{targetCount:newAssignTarget,submissions:[]}:{}),
+      ...(newAssignType==="copy_study"?{refImage:null,submissions:[]}:{})
+    };
     onUpdate({...course,assignments:[...(course.assignments||[]),a]});
-    setNewAssign("");
+    setNewAssign("");setNewAssignType("normal");setNewAssignTarget(10);
+  }
+  function submitPractice(assignId,submission){
+    const assignments=(course.assignments||[]).map(a=>{
+      if(a.id!==assignId)return a;
+      const subs=[...(a.submissions||[]),submission];
+      const done=a.type==="sketch"?subs.reduce((n,s)=>n+(s.count||1),0)>=( a.targetCount||10):subs.length>=1;
+      return{...a,submissions:subs,status:done?"done":"todo"};
+    });
+    onUpdate({...course,assignments});
+    setShowPracticeCheckIn(null);
+  }
+  function uploadRefImage(assignId,imgData){
+    const assignments=(course.assignments||[]).map(a=>a.id===assignId?{...a,refImage:imgData}:a);
+    onUpdate({...course,assignments});
+  }
+  function deleteAssignment(assignId){
+    if(!confirm("删除这个练习？"))return;
+    onUpdate({...course,assignments:(course.assignments||[]).filter(a=>a.id!==assignId)});
   }
   function pushAssignToBoard(a){
     onAddTaskToBoard({title:`[${course.title}] ${a.title}`,project:2,priority:"normal",due:a.due||""});
@@ -2220,17 +2421,115 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddP
           <span style={{fontSize:13,fontWeight:500}}>作业 / 练习</span>
           <button onClick={()=>setShowAssign(v=>!v)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加</button>
         </div>
-        {showAssign&&<div style={{display:"flex",gap:6,marginBottom:10}}>
-          <input value={newAssign} onChange={e=>setNewAssign(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addAssignment()} placeholder="作业/练习名称" autoFocus style={{flex:1,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
-          <button onClick={addAssignment} style={{padding:"6px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>添加</button>
-        </div>}
-        {(course.assignments||[]).map(a=><div key={a.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
-          <span style={{flex:1,fontSize:13}}>{a.title}</span>
-          {!a.pushed?<button onClick={()=>pushAssignToBoard(a)} style={{fontSize:11,color:"#0F6E56",background:"none",border:"0.5px solid #0F6E56",borderRadius:4,padding:"2px 8px",cursor:"pointer"}}>→ 加入任务板</button>
-          :<span style={{fontSize:11,color:"#bbb"}}>已加入任务板</span>}
-        </div>)}
-        {(course.assignments||[]).length===0&&<div style={{fontSize:13,color:"#ccc",textAlign:"center",padding:"8px 0"}}>没有作业</div>}
+        {showAssign&&(
+          <div style={{background:"#f7f6f3",borderRadius:8,padding:"12px",marginBottom:12,display:"flex",flexDirection:"column",gap:8}}>
+            {/* 练习类型选择 */}
+            <div style={{display:"flex",gap:6}}>
+              {[["normal","📝 普通作业"],["copy_study","🎨 临摹练习"],["sketch","✏️ 速写练习"]].map(([t,l])=>(
+                <button key={t} onClick={()=>setNewAssignType(t)}
+                  style={{flex:1,padding:"6px 4px",borderRadius:6,border:`1.5px solid ${newAssignType===t?"#185FA5":"#e0ddd6"}`,background:newAssignType===t?"#185FA5":"transparent",color:newAssignType===t?"#fff":"#555",fontSize:12,cursor:"pointer",fontWeight:newAssignType===t?600:400}}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <input value={newAssign} onChange={e=>setNewAssign(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addAssignment()}
+              placeholder={newAssignType==="sketch"?"速写练习名称，如：人物速写30张":newAssignType==="copy_study"?"临摹练习名称，如：大卫·霍克尼光影临摹":"作业名称"}
+              autoFocus style={{padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+            {newAssignType==="sketch"&&(
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:"#666",whiteSpace:"nowrap"}}>目标张数</span>
+                <div style={{display:"flex",gap:4}}>
+                  {[5,10,20,30,50].map(n=>(
+                    <button key={n} onClick={()=>setNewAssignTarget(n)}
+                      style={{padding:"4px 10px",borderRadius:14,border:`1px solid ${newAssignTarget===n?"#185FA5":"#e0ddd6"}`,background:newAssignTarget===n?"#185FA5":"transparent",color:newAssignTarget===n?"#fff":"#555",fontSize:12,cursor:"pointer"}}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <button onClick={addAssignment} style={{padding:"7px 12px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer",fontWeight:500}}>添加</button>
+          </div>
+        )}
+        {(course.assignments||[]).map(a=>{
+          const isCopy=a.type==="copy_study";
+          const isSketch=a.type==="sketch";
+          const subCount=(a.submissions||[]).length;
+          const sketchDone=isSketch?(a.submissions||[]).reduce((n,s)=>n+(s.count||1),0):0;
+          const sketchTarget=a.targetCount||10;
+          const pct=isSketch?Math.min(sketchDone/sketchTarget,1):isCopy?Math.min(subCount/1,1):0;
+          return(
+            <div key={a.id} style={{borderRadius:8,border:"0.5px solid #e0ddd6",marginBottom:6,overflow:"hidden"}}>
+              {/* 标题行 */}
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:a.status==="done"?"#E8F5EE":"#fff"}}>
+                <span style={{fontSize:13,flex:1,color:a.status==="done"?"#0F6E56":"#1a1a1a",textDecoration:a.status==="done"?"line-through":"none"}}>{a.title}</span>
+                {(isCopy||isSketch)&&(
+                  <span style={{fontSize:11,padding:"2px 7px",borderRadius:10,background:isCopy?"#EBF3FB":"#FFF5E8",color:isCopy?"#185FA5":"#854F0B",fontWeight:500,whiteSpace:"nowrap"}}>
+                    {isCopy?"🎨 临摹":"✏️ 速写"}
+                  </span>
+                )}
+                {!a.pushed&&a.type==="normal"&&<button onClick={()=>pushAssignToBoard(a)} style={{fontSize:11,color:"#0F6E56",background:"none",border:"0.5px solid #0F6E56",borderRadius:4,padding:"2px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>→任务板</button>}
+                {(isCopy||isSketch)&&a.status!=="done"&&(
+                  <button onClick={()=>setShowPracticeCheckIn(a)}
+                    style={{fontSize:12,padding:"4px 12px",background:"#185FA5",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontWeight:500,whiteSpace:"nowrap"}}>
+                    {isCopy?"打卡临摹":"打卡速写"}
+                  </button>
+                )}
+                {a.status==="done"&&<span style={{fontSize:11,color:"#0F6E56",fontWeight:600}}>✓ 完成</span>}
+                <button onClick={()=>deleteAssignment(a.id)} style={{fontSize:11,color:"#ccc",background:"none",border:"none",cursor:"pointer",padding:"0 2px"}}>✕</button>
+              </div>
+              {/* 进度条（速写）*/}
+              {isSketch&&(
+                <div style={{padding:"4px 10px 8px",background:"#FAFAFA"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#888",marginBottom:4}}>
+                    <span>{sketchDone} / {sketchTarget} 张</span>
+                    {subCount>0&&<span>共{subCount}次打卡</span>}
+                  </div>
+                  <div style={{height:4,background:"#e0ddd6",borderRadius:2}}>
+                    <div style={{height:"100%",width:`${pct*100}%`,background:"#854F0B",borderRadius:2,transition:"width .3s"}}/>
+                  </div>
+                  {/* 速写缩略图历史 */}
+                  {(a.submissions||[]).some(s=>s.images?.length>0)&&(
+                    <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                      {(a.submissions||[]).flatMap(s=>s.images||[]).slice(-8).map((img,i)=>(
+                        <img key={i} src={img} style={{width:36,height:36,objectFit:"cover",borderRadius:4,border:"0.5px solid #e0ddd6"}}/>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* 临摹最新提交缩略 */}
+              {isCopy&&subCount>0&&(
+                <div style={{padding:"4px 10px 8px",background:"#FAFAFA",display:"flex",gap:6,alignItems:"center"}}>
+                  <span style={{fontSize:11,color:"#888"}}>已提交{subCount}次</span>
+                  <div style={{display:"flex",gap:4}}>
+                    {[...(a.submissions||[])].reverse().slice(0,4).map(s=>(
+                      <img key={s.id} src={s.image} style={{width:32,height:32,objectFit:"cover",borderRadius:4,border:"0.5px solid #e0ddd6"}}/>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* 参考图上传入口（临摹，未打卡时） */}
+              {isCopy&&!a.refImage&&a.status!=="done"&&(
+                <div style={{padding:"4px 10px 8px",background:"#FAFAFA"}}>
+                  <label style={{fontSize:11,color:"#185FA5",cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4}}>
+                    📎 上传参考图
+                    <input type="file" accept="image/*" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>uploadRefImage(a.id,ev.target.result);r.readAsDataURL(f);e.target.value="";}}/>
+                  </label>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {(course.assignments||[]).length===0&&<div style={{fontSize:13,color:"#ccc",textAlign:"center",padding:"8px 0"}}>没有作业，点右上角添加</div>}
       </div>
+      {/* 打卡弹窗 */}
+      {showPracticeCheckIn&&showPracticeCheckIn.type==="copy_study"&&(
+        <CopyStudyCheckIn assignment={showPracticeCheckIn} onSave={sub=>submitPractice(showPracticeCheckIn.id,sub)} onClose={()=>setShowPracticeCheckIn(null)}/>
+      )}
+      {showPracticeCheckIn&&showPracticeCheckIn.type==="sketch"&&(
+        <SketchCheckIn assignment={showPracticeCheckIn} onSave={sub=>submitPractice(showPracticeCheckIn.id,sub)} onClose={()=>setShowPracticeCheckIn(null)}/>
+      )}
     </div>
     {showEdit&&<EditCourseModal course={course} onSave={updated=>{onUpdate(updated);setShowEdit(false);}} onClose={()=>setShowEdit(false)}/>}
     {showAddNote&&<AddNoteModal courseId={course.id} episodeId={null} onSave={addNote} onClose={()=>setShowAddNote(false)}/>}
@@ -2798,7 +3097,7 @@ function BlockBreaker({tasks,onAddTask,onUpdateTask,geminiKey,onClose}){
 // ══════════════════════════════════════════
 // §BLOCKING  全局框架 BlockingView
 // ══════════════════════════════════════════
-function BlockingView({tasks,onUpdate,onAddTask,geminiKey}){
+function BlockingView({tasks,onUpdate,onAddTask,geminiKey,onSaveLayers}){
   const [showSetup,setShowSetup]=useState(false);
   const [projName,setProjName]=useState("");
   const [projGoal,setProjGoal]=useState("");
@@ -2807,7 +3106,7 @@ function BlockingView({tasks,onUpdate,onAddTask,geminiKey}){
   const [savedLayers,setSavedLayers]=useState(()=>lsGet("zj_blocking_layers",[]));
   const [activeLayer,setActiveLayer]=useState(null);
 
-  function saveLayers(l){setSavedLayers(l);lsSet("zj_blocking_layers",l);}
+  function saveLayers(l){setSavedLayers(l);lsSet("zj_blocking_layers",l);if(onSaveLayers)onSaveLayers(l);}
 
   const PHASES=[
     {id:"skeleton",label:"第1层：骨架跑通",color:"#854F0B",bg:"#FAEEDA",desc:"最粗糙的完整流程，哪怕极简陋"},
@@ -4104,6 +4403,7 @@ function App(){
   });
   const [habits,setHabits]=useState([]);
   const [pomLog,setPomLog]=useState([]);
+  const [blockingLayers,setBlockingLayers]=useState(()=>lsGet("zj_blocking_layers",[]));
   const [tasks,setTasks]=useState(SAMPLE_TASKS);
   const [journal,setJournal]=useState({});
   const [futureLog,setFutureLog]=useState({});
@@ -4141,6 +4441,7 @@ function App(){
   const gistIdRef=useRef(lsGet("zj_gist_id",""));
   const habitsRef=useRef([]);
   const pomLogRef=useRef([]);
+  const blockingLayersRef=useRef(lsGet("zj_blocking_layers",[]));
 
   // Keep refs in sync with state
   useEffect(()=>{tasksRef.current=tasks;},[tasks]);
@@ -4152,6 +4453,7 @@ function App(){
   useEffect(()=>{gistIdRef.current=gistId;},[gistId]);
   useEffect(()=>{habitsRef.current=habits;},[habits]);
   useEffect(()=>{pomLogRef.current=pomLog;},[pomLog]);
+  useEffect(()=>{blockingLayersRef.current=blockingLayers;},[blockingLayers]);
 
   // load from gist on mount
   function loadFromGist(){
@@ -4167,6 +4469,7 @@ function App(){
         if(data.futureLog)setFutureLog(data.futureLog);
         if(data.courses&&data.courses.length>0)setCourses(data.courses.map(c=>({...BLANK_COURSE,...c})));
         if(data.nextId)setNextId(data.nextId);
+        if(data.blockingLayers&&data.blockingLayers.length>0){setBlockingLayers(data.blockingLayers);lsSet("zj_blocking_layers",data.blockingLayers);}
         setSyncStatus("saved");
       } else {
         setSyncStatus("idle");
@@ -4216,7 +4519,8 @@ function App(){
         courses:coursesToSave,
         habits:habitsRef.current,
         pomLog:pomLogRef.current,
-        nextId:nidToSave
+        nextId:nidToSave,
+        blockingLayers:blockingLayersRef.current
       })
         .then(()=>setSyncStatus("saved"))
         .catch(e=>{setSyncStatus("error");console.error("Gist save failed:",e);});
@@ -4480,7 +4784,7 @@ function App(){
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
         {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry}/>}
-        {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey}/>}
+        {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey} onSaveLayers={bl=>{setBlockingLayers(bl);blockingLayersRef.current=bl;triggerSave();}}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
           :<>{PROJECTS.map(p=>{const pts=tasks.filter(t=>t.project===p.id);const d=pts.filter(t=>t.done).length;const pct=pts.length?Math.round(d/pts.length*100):0;return<div key={p.id} onClick={()=>setProjView(p)} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:12,cursor:"pointer"}}>
