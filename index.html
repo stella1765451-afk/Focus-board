@@ -144,7 +144,23 @@ function stripImagesForGist(payload){
     });
     return{...c,assignments};
   });
-  return{...payload,tasks,courses};
+  // AI 对话里的图片消息也剥离
+  const aiHistory=(payload.aiHistory||[]).map(conv=>({
+    ...conv,
+    msgs:(conv.msgs||[]).map(m=>{
+      if(!m.images||!m.images.length)return m;
+      const images=m.images.map((img,i)=>{
+        if(img&&img.startsWith("data:")){
+          const k="zj_img_ai_"+conv.id+"_"+i+"_"+(m.role||"u");
+          try{localStorage.setItem(k,img);}catch(e){}
+          return"__ls:"+k;
+        }
+        return img;
+      });
+      return{...m,images};
+    })
+  }));
+  return{...payload,tasks,courses,aiHistory};
 }
 
 // 加载时恢复 __ls: 引用为实际 base64
@@ -152,7 +168,11 @@ function restoreImagesFromLS(payload){
   function res(v){if(typeof v==="string"&&v.startsWith("__ls:")){    try{return localStorage.getItem(v.slice(5))||v;}catch(e){return v;}  }return v;}
   const tasks=(payload.tasks||[]).map(t=>({...t,    checkInPreview:res(t.checkInPreview),    attachments:(t.attachments||[]).map(a=>({...a,data:res(a.data)}))  }));
   const courses=(payload.courses||[]).map(c=>({...c,    assignments:(c.assignments||[]).map(a=>({...a,      refImage:res(a.refImage),      submissions:(a.submissions||[]).map(s=>({...s,        image:res(s.image),        images:(s.images||[]).map(img=>res(img))      }))    }))  }));
-  return{...payload,tasks,courses};
+  const aiHistory=(payload.aiHistory||[]).map(conv=>({
+    ...conv,
+    msgs:(conv.msgs||[]).map(m=>({...m,images:(m.images||[]).map(img=>res(img))}))
+  }));
+  return{...payload,tasks,courses,aiHistory};
 }
 
 async function gistSave(token,gistId,payload){
@@ -4534,14 +4554,14 @@ function App(){
     if(lsGet(k))return false;
     lsSet(k,true);return true;
   });
-  const [habits,setHabits]=useState([]);
-  const [pomLog,setPomLog]=useState([]);
+  const [habits,setHabits]=useState(()=>lsGet("zj_habits",[]));
+  const [pomLog,setPomLog]=useState(()=>lsGet("zj_pom_log",[]));
   const [blockingLayers,setBlockingLayers]=useState(()=>lsGet("zj_blocking_layers",[]));
-  const [tasks,setTasks]=useState(SAMPLE_TASKS);
-  const [journal,setJournal]=useState({});
-  const [futureLog,setFutureLog]=useState({});
-  const [courses,setCourses]=useState([]);
-  const [nextId,setNextId]=useState(10);
+  const [tasks,setTasks]=useState(()=>lsGet("zj_tasks",SAMPLE_TASKS));
+  const [journal,setJournal]=useState(()=>lsGet("zj_journal",{}));
+  const [futureLog,setFutureLog]=useState(()=>lsGet("zj_future_log",{}));
+  const [courses,setCourses]=useState(()=>lsGet("zj_courses",[]).map(c=>({...BLANK_COURSE,...c})));
+  const [nextId,setNextId]=useState(()=>lsGet("zj_next_id",10));
   const [view,setView]=useState("today");
   const [aiOpen,setAiOpen]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
@@ -4598,12 +4618,15 @@ function App(){
       isFirstLoad.current=false; // Mark load done FIRST before setting state
       const data=rawData?restoreImagesFromLS(rawData):rawData;
       if(data){
-        if(data.tasks&&data.tasks.length>0)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
-        if(data.journal&&Object.keys(data.journal).length>0)setJournal(data.journal);
-        if(data.futureLog)setFutureLog(data.futureLog);
-        if(data.courses&&data.courses.length>0)setCourses(data.courses.map(c=>({...BLANK_COURSE,...c})));
-        if(data.nextId)setNextId(data.nextId);
+        if(data.tasks&&data.tasks.length>0){setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));lsSet("zj_tasks",data.tasks);}
+        if(data.journal&&Object.keys(data.journal).length>0){setJournal(data.journal);lsSet("zj_journal",data.journal);}
+        if(data.futureLog&&Object.keys(data.futureLog).length>0){setFutureLog(data.futureLog);lsSet("zj_future_log",data.futureLog);}
+        if(data.courses&&data.courses.length>0){const cs=data.courses.map(c=>({...BLANK_COURSE,...c}));setCourses(cs);lsSet("zj_courses",cs);}
+        if(data.nextId){setNextId(data.nextId);lsSet("zj_next_id",data.nextId);}
         if(data.blockingLayers&&data.blockingLayers.length>0){setBlockingLayers(data.blockingLayers);lsSet("zj_blocking_layers",data.blockingLayers);}
+        if(data.habits&&data.habits.length>0){setHabits(data.habits);lsSet("zj_habits",data.habits);}
+        if(data.pomLog&&data.pomLog.length>0){setPomLog(data.pomLog);lsSet("zj_pom_log",data.pomLog);}
+        if(data.aiHistory&&data.aiHistory.length>0){saveAIHistory(data.aiHistory);}
         setSyncStatus("saved");
       } else {
         setSyncStatus("idle");
@@ -4675,9 +4698,9 @@ function App(){
     },1200);
   }
 
-  function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;triggerSave(next,undefined,undefined,undefined,undefined);return next;});}
-  function setJournalAndSync(j){setJournal(j);triggerSave(undefined,j,undefined,undefined,undefined);}
-  function setFutureLogAndSync(fl){setFutureLog(fl);triggerSave(undefined,undefined,fl,undefined,undefined);}
+  function setTasksAndSync(fn){setTasks(prev=>{const next=typeof fn==="function"?fn(prev):fn;lsSet("zj_tasks",next);triggerSave(next,undefined,undefined,undefined,undefined);return next;});}
+  function setJournalAndSync(j){setJournal(j);lsSet("zj_journal",j);triggerSave(undefined,j,undefined,undefined,undefined);}
+  function setFutureLogAndSync(fl){setFutureLog(fl);lsSet("zj_future_log",fl);triggerSave(undefined,undefined,fl,undefined,undefined);}
   function updateCourseNote(courseId,noteId,changes){
     setCourses(cs=>{
       const next=cs.map(c=>{
@@ -4685,18 +4708,19 @@ function App(){
         const notes=(c.notes||[]).map(n=>n.id===noteId?{...n,...changes}:n);
         return{...c,notes};
       });
+      lsSet("zj_courses",next);
       triggerSave(undefined,undefined,undefined,undefined,next);
       return next;
     });
   }
   function updateCourse(updated){
-    setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);triggerSave(undefined,undefined,undefined,undefined,next);return next;});
+    setCourses(cs=>{const next=cs.map(c=>c.id===updated.id?updated:c);lsSet("zj_courses",next);triggerSave(undefined,undefined,undefined,undefined,next);return next;});
   }
   function addCourse(c){
-    setCourses(cs=>{const next=[...cs,c];triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+    setCourses(cs=>{const next=[...cs,c];lsSet("zj_courses",next);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
   }
   function archiveCourse(id){
-    setCourses(cs=>{const next=cs.map(c=>c.id===id?{...c,archived:true,active:false}:c);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
+    setCourses(cs=>{const next=cs.map(c=>c.id===id?{...c,archived:true,active:false}:c);lsSet("zj_courses",next);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
   }
 
   function toggleTask(id){
@@ -4741,6 +4765,7 @@ function App(){
   function updateHabits(newHabits){
     setHabits(newHabits);
     habitsRef.current=newHabits;
+    lsSet("zj_habits",newHabits);
     triggerSave();
   }
   function addPomEntry(count,minutes){
@@ -4750,6 +4775,7 @@ function App(){
       const next=exists
         ?log.map(l=>l.date===today?{...l,count:(l.count||0)+count,minutes:(l.minutes||0)+minutes}:l)
         :[...log,{date:today,count,minutes}];
+      lsSet("zj_pom_log",next);
       pomLogRef.current=next;
       triggerSave();
       return next;
@@ -4760,6 +4786,7 @@ function App(){
     const t={...BLANK_TASK,...partial,id:nextIdRef.current};
     setNextId(newNid);
     nextIdRef.current=newNid;
+    lsSet("zj_next_id",newNid);
     setTasksAndSync(ts=>{const next=[...ts,t];triggerSave(next,undefined,undefined,newNid,undefined);return next;});
     // 补全对应 episode 的 taskId（episode 里用 taskTitle 做临时 key）
     setCourses(cs=>{
