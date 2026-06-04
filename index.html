@@ -52,6 +52,7 @@ body.dark-mode ::-webkit-scrollbar-thumb{background:#3d3560}
 @keyframes cat-tail{0%,100%{transform:rotate(0)}50%{transform:rotate(15deg)}}
 @keyframes cat-jump{0%,100%{transform:translateY(0)}40%{transform:translateY(-18px)}60%{transform:translateY(-14px)}}
 @keyframes cat-sad{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg) translateY(2px)}}
+@keyframes cat-walk-bob{0%,100%{transform:rotate(-3deg) translateY(0)}50%{transform:rotate(3deg) translateY(-2px)}}
 @keyframes star-pop{0%{opacity:0;transform:scale(0) rotate(0)}50%{opacity:1;transform:scale(1.3) rotate(180deg)}100%{opacity:0;transform:scale(0) rotate(360deg)}}
 @keyframes float-up{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-28px)}}
 
@@ -1149,7 +1150,7 @@ function parseExternalPlan(content){
 // ══════════════════════════════════════════
 // §AIPANEL  AI助手面板 AIPanel
 // ══════════════════════════════════════════
-function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask}){
+function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask,courses,onUpdateCourse}){
   // ── history: [{id, name, group, msgs:[{role,text,images}], createdAt}]
   const [history,setHistory]=useState(()=>loadAIHistory());
   const [activeConvId,setActiveConvId]=useState(null);
@@ -1378,6 +1379,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
       const clean=reply.replace(/\u0060\u0060\u0060json|\u0060\u0060\u0060/g,"").trim();
       const parsed=JSON.parse(clean);
       if(Array.isArray(parsed)&&parsed.length>0){
+        // 自动选 active 课程
+        const defCourse=(courses||[]).find(c=>c.active&&!c.archived)||null;
         setTaskPreview({
           msgIndex,
           tasks:parsed.map(t=>({
@@ -1390,7 +1393,8 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
             subtasks:Array.isArray(t.subtasks)?t.subtasks:[],
             subtaskDone:Array.isArray(t.subtasks)?t.subtasks.map(()=>false):[],
           })),
-          selected:parsed.map(()=>true)
+          selected:parsed.map(()=>true),
+          targetCourseId:defCourse?defCourse.id:""
         });
       }
     }catch(e){console.error("Extract failed:",e);}
@@ -1400,9 +1404,39 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
   function confirmAddTasks(){
     if(!taskPreview)return;
     const toAdd=taskPreview.tasks.filter((_,i)=>taskPreview.selected[i]);
+    // ── 同步到指定课程 ──
+    if(courses&&onUpdateCourse&&taskPreview.targetCourseId){
+      const targetCourse=courses.find(c=>String(c.id)===String(taskPreview.targetCourseId));
+      if(targetCourse){
+        const learningTasks=toAdd.filter(t=>t.project===2||t.project==="2");
+        if(learningTasks.length>0)syncTasksToCourse(targetCourse,learningTasks);
+      }
+    }
+    // 给每个 task 加 nextId（addTask 内部会分配，这里提前记录 courseId）
     toAdd.forEach(t=>onAddTask(t));
     setTaskPreview(null);
     setMsgs(m=>[...m,{role:"ai",text:"✓ 已将 "+toAdd.length+" 个任务加入专注板",images:[]}]);
+  }
+
+  // 把一批学习任务同步到课程的章节列表
+  function syncTasksToCourse(course,taskList){
+    // 已有的 taskId 列表，避免重复
+    const existingTaskIds=new Set((course.episodes||[]).map(e=>e.taskId).filter(Boolean));
+    const newEps=taskList
+      .filter(t=>!existingTaskIds.has("pending_"+t.title)) // 用 title 作临时 key（id 未分配）
+      .map((t,i)=>({
+        ...BLANK_EPISODE,
+        id:Date.now()+i,
+        title:t.title,
+        status:"todo",
+        duration:t.estimate||"",
+        taskTitle:t.title, // 用 title 做反向索引，等 addTask 分配 id 后由 syncEpisodeTaskIds 补全
+        pushedToBoard:true, // 已在任务板
+      }));
+    if(newEps.length>0){
+      const updated={...course,episodes:[...(course.episodes||[]),...newEps]};
+      onUpdateCourse(updated);
+    }
   }
 
   async function doSend(text,btid,imgOverride){
@@ -1545,6 +1579,16 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
               </label>
             ))}
           </div>
+          {courses&&courses.filter(c=>!c.archived).length>0&&(
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,padding:"6px 8px",background:"rgba(24,95,165,.06)",borderRadius:6}}>
+              <span style={{fontSize:11,color:"#555",whiteSpace:"nowrap"}}>同步到课程：</span>
+              <select value={taskPreview.targetCourseId||""} onChange={e=>setTaskPreview(p=>({...p,targetCourseId:e.target.value}))}
+                style={{flex:1,fontSize:12,padding:"3px 6px",border:"0.5px solid #ccc",borderRadius:5}}>
+                <option value="">不同步</option>
+                {courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.title}</option>)}
+              </select>
+            </div>
+          )}
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <span style={{fontSize:11,color:"#185FA5",flex:1}}>{taskPreview.selected.filter(Boolean).length}/{taskPreview.tasks.length} 已选</span>
             <button onClick={()=>setTaskPreview(null)} style={{fontSize:12,color:"#888",background:"none",border:"none",cursor:"pointer"}}>取消</button>
@@ -1599,6 +1643,16 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
                         </label>
                       ))}
                     </div>
+                    {courses&&courses.filter(c=>!c.archived).length>0&&(
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,padding:"6px 8px",background:"#f7f6f3",borderRadius:6}}>
+                        <span style={{fontSize:11,color:"#555",whiteSpace:"nowrap"}}>同步到课程：</span>
+                        <select value={taskPreview.targetCourseId||""} onChange={e=>setTaskPreview(p=>({...p,targetCourseId:e.target.value}))}
+                          style={{flex:1,fontSize:12,padding:"3px 6px",border:"0.5px solid #ccc",borderRadius:5}}>
+                          <option value="">不同步</option>
+                          {courses.filter(c=>!c.archived).map(c=><option key={c.id} value={c.id}>{c.title}</option>)}
+                        </select>
+                      </div>
+                    )}
                     <div style={{display:"flex",gap:6,alignItems:"center"}}>
                       <span style={{fontSize:11,color:"#aaa",flex:1}}>{taskPreview.selected.filter(Boolean).length}/{taskPreview.tasks.length} 已选</span>
                       <button onClick={()=>setTaskPreview(null)} style={{fontSize:12,color:"#888",background:"none",border:"none",cursor:"pointer"}}>取消</button>
@@ -1886,11 +1940,19 @@ function daysSince(dateStr){
 }
 
 function getLearningLog(courses){
-  // returns map of dateStr -> minutes studied
+  // returns map of dateStr -> {mins, sketches, copies}
   const log={};
+  function ensure(d){if(!log[d])log[d]={mins:0,sketches:0,copies:0};return log[d];}
   courses.forEach(c=>{
-    (c.studyLog||[]).forEach(({date,minutes})=>{
-      log[date]=(log[date]||0)+minutes;
+    // Study sessions
+    (c.studyLog||[]).forEach(({date,minutes})=>{ensure(date).mins+=minutes||0;});
+    // Sketch & copy submissions
+    (c.assignments||[]).forEach(a=>{
+      (a.submissions||[]).forEach(s=>{
+        const d=s.date||todayStr();
+        if(a.type==="sketch"){ensure(d).sketches+=(s.count||1);}
+        else if(a.type==="copy_study"){ensure(d).copies+=1;}
+      });
     });
   });
   return log;
@@ -1904,8 +1966,7 @@ function LearningHeatmap({courses}){
   for(let i=89;i>=0;i--){
     const d=new Date(today);d.setDate(d.getDate()-i);
     const k=yyyymmdd(d);
-    const mins=log[k]||0;
-    cells.push({k,mins,d});
+    cells.push({k,d});
   }
   const weeks=[];
   let week=[];
@@ -1913,28 +1974,47 @@ function LearningHeatmap({courses}){
     week.push(c);
     if(week.length===7||(i===cells.length-1)){weeks.push(week);week=[];}
   });
-  function getColor(mins){
-    if(!mins)return"#f0ede8";
-    if(mins<20)return"#c6e6c6";
-    if(mins<45)return"#74c474";
-    return"#2d9c2d";
+  function getColor(cell){
+    const d=log[cell.k]||{mins:0,sketches:0,copies:0};
+    const hasPractice=d.sketches>0||d.copies>0;
+    const mins=d.mins||0;
+    if(!mins&&!hasPractice)return"#f0ede8";
+    // Practice only (no study time): warm amber
+    if(!mins&&hasPractice)return"#F5C842";
+    // Study + practice: deeper green with tint
+    if(mins<20)return hasPractice?"#a8d8a8":"#c6e6c6";
+    if(mins<60)return hasPractice?"#4caf7d":"#74c474";
+    return hasPractice?"#1a7a3a":"#2d9c2d";
   }
-  const totalDays=cells.filter(c=>c.mins>0).length;
-  const totalMins=cells.reduce((a,c)=>a+c.mins,0);
+  const totalDays=cells.filter(c=>log[c.k]&&(log[c.k].mins>0||log[c.k].sketches>0||log[c.k].copies>0)).length;
+  const totalMins=cells.reduce((a,c)=>a+(log[c.k]?.mins||0),0);
+  const totalSketches=cells.reduce((a,c)=>a+(log[c.k]?.sketches||0),0);
+  const totalCopies=cells.reduce((a,c)=>a+(log[c.k]?.copies||0),0);
   return<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"14px 16px",marginBottom:16}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
       <span style={{fontSize:13,fontWeight:500}}>过去90天学习记录</span>
-      <span style={{fontSize:12,color:"#888"}}>{totalDays}天有学习 · 共{Math.round(totalMins/60)}小时</span>
+      <span style={{fontSize:12,color:"#888"}}>{totalDays}天</span>
+    </div>
+    <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+      {[["📚",Math.round(totalMins/60)+"h","学习"],["✏️",totalSketches+"张","速写"],["🎨",totalCopies+"次","临摹"]].map(([icon,val,label])=>(
+        <div key={label} style={{fontSize:12,color:"#666"}}><span style={{fontWeight:600,color:"#1a1a1a"}}>{icon} {val}</span> {label}</div>
+      ))}
     </div>
     <div style={{display:"flex",gap:3}}>
       {weeks.map((w,wi)=><div key={wi} style={{display:"flex",flexDirection:"column",gap:3}}>
-        {w.map(c=><div key={c.k} title={`${c.k}: ${c.mins}分钟`} style={{width:10,height:10,borderRadius:2,background:getColor(c.mins),cursor:"default"}}/>)}
+        {w.map(c=>{
+          const d=log[c.k]||{};
+          const tip=`${c.k}${d.mins?": "+d.mins+"分钟学习":""}${d.sketches?" · "+d.sketches+"张速写":""}${d.copies?" · "+d.copies+"次临摹":""}`;
+          return<div key={c.k} title={tip} style={{width:10,height:10,borderRadius:2,background:getColor(c),cursor:"default"}}/>;
+        })}
       </div>)}
     </div>
-    <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8,fontSize:11,color:"#aaa"}}>
-      <span>少</span>
-      {["#f0ede8","#c6e6c6","#74c474","#2d9c2d"].map(c=><div key={c} style={{width:10,height:10,borderRadius:2,background:c}}/>)}
-      <span>多</span>
+    <div style={{display:"flex",gap:6,alignItems:"center",marginTop:8,fontSize:11,color:"#aaa",flexWrap:"wrap"}}>
+      <span style={{marginRight:2}}>学习时间：</span>
+      {["#f0ede8","#c6e6c6","#74c474","#2d9c2d"].map(c=><div key={c} style={{width:9,height:9,borderRadius:2,background:c}}/>)}
+      <span style={{margin:"0 8px 0 2px"}}>少→多</span>
+      <div style={{width:9,height:9,borderRadius:2,background:"#F5C842"}}/>
+      <span>练习</span>
     </div>
   </div>;
 }
@@ -1955,26 +2035,16 @@ function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
   const timerRef=useRef(null);
   const studyTimer=useRef(null);
 
-  // Bing wallpaper
+  // Wallpaper — Unsplash Source (no CORS, direct img URL)
+  const WALL_TOPICS=["nature","forest","ocean","mountain","minimal","architecture","abstract","landscape"];
+  function getWallUrl(){
+    const topic=WALL_TOPICS[Math.floor(Math.random()*WALL_TOPICS.length)];
+    return"https://source.unsplash.com/1600x900/?" +topic+"&sig="+Date.now();
+  }
   useEffect(()=>{
     setBgLoading(true);
-    // Use a Bing random wallpaper via their API
-    const urls=[
-      "https://bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=zh-CN",
-    ];
-    fetch("https://bing.com/HPImageArchive.aspx?format=js&idx="+Math.floor(Math.random()*7)+"&n=1&mkt=zh-CN")
-      .then(r=>r.json())
-      .then(data=>{
-        const path=data?.images?.[0]?.url;
-        if(path){
-          setBgUrl("https://bing.com"+path);
-        } else {
-          // fallback gradient
-          setBgUrl("");
-        }
-        setBgLoading(false);
-      })
-      .catch(()=>{setBgUrl("");setBgLoading(false);});
+    setBgUrl(getWallUrl());
+    setBgLoading(false);
   },[]);
 
   // Study minute counter
@@ -1991,6 +2061,12 @@ function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
           if(s<=1){
             clearInterval(timerRef.current);
             setPomRunning(false);
+            // Notification
+            const msg=pomMode==="work"?"⏰ 25分钟到了！休息一下":"☕ 休息结束，开始下一个番茄";
+            document.title="⏰ 番茄结束 — 专注板";
+            if(typeof Notification!=="undefined"&&Notification.permission==="granted"){
+              try{new Notification(msg,{icon:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🍅</text></svg>"});}catch(e){}
+            }
             // Auto advance
             if(pomMode==="work"){
               const next=pomCount+1;
@@ -2004,13 +2080,17 @@ function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
             }
             return 0;
           }
+          // Update tab title
+          const mm=String(Math.floor((s-1)/60)).padStart(2,"0");
+          const ss2=String((s-1)%60).padStart(2,"0");
+          document.title=`${mm}:${ss2} ${pomMode==="work"?"🍅":"☕"} — 专注板`;
           return s-1;
         });
       },1000);
     } else {
       clearInterval(timerRef.current);
     }
-    return()=>clearInterval(timerRef.current);
+    return()=>{clearInterval(timerRef.current);document.title="专注板";};
   },[pomRunning,pomMode]);
 
   function switchMode(mode){
@@ -2051,7 +2131,7 @@ function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
       {/* Exit button */}
       <button onClick={onExit} style={{position:"absolute",top:20,right:24,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.7)",fontSize:13,padding:"6px 14px",borderRadius:8,cursor:"pointer",zIndex:1}}>✕ 退出</button>
       {/* Refresh wallpaper */}
-      <button onClick={()=>{setBgLoading(true);fetch("https://bing.com/HPImageArchive.aspx?format=js&idx="+Math.floor(Math.random()*7)+"&n=1&mkt=zh-CN").then(r=>r.json()).then(d=>{const p=d?.images?.[0]?.url;setBgUrl(p?"https://bing.com"+p:"");setBgLoading(false);}).catch(()=>{setBgUrl("");setBgLoading(false);});}} style={{position:"absolute",top:20,right:120,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.6)",fontSize:12,padding:"6px 12px",borderRadius:8,cursor:"pointer",zIndex:1}}>🖼 换壁纸</button>
+      <button onClick={()=>{setBgUrl(getWallUrl());}} style={{position:"absolute",top:20,right:120,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.6)",fontSize:12,padding:"6px 12px",borderRadius:8,cursor:"pointer",zIndex:1}}>🖼 换壁纸</button>
 
       {!done?(
         <div style={{position:"relative",zIndex:1,display:"flex",flexDirection:"column",alignItems:"center",width:"100%",maxWidth:480,padding:"0 20px"}}>
@@ -2082,7 +2162,7 @@ function FocusMode({course,episode,onComplete,onExit,onSaveNote,geminiKey}){
 
           {/* Controls */}
           <div style={{display:"flex",gap:10,marginBottom:28}}>
-            <button onClick={()=>setPomRunning(r=>!r)} style={{padding:"10px 28px",borderRadius:8,border:"none",background:pomRunning?"rgba(255,255,255,.2)":modeColor,color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",minWidth:100}}>
+            <button onClick={()=>{if(!pomRunning&&typeof Notification!=="undefined"&&Notification.permission==="default")Notification.requestPermission();setPomRunning(r=>!r);}} style={{padding:"10px 28px",borderRadius:8,border:"none",background:pomRunning?"rgba(255,255,255,.2)":modeColor,color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",minWidth:100}}>
               {pomRunning?"⏸ 暂停":"▶ 开始"}
             </button>
             <button onClick={()=>{setPomRunning(false);setPomSecs(MODES[pomMode].mins*60);}} style={{padding:"10px 16px",borderRadius:8,border:"0.5px solid rgba(255,255,255,.2)",background:"transparent",color:"rgba(255,255,255,.6)",fontSize:13,cursor:"pointer"}}>↺ 重置</button>
@@ -2396,11 +2476,39 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddP
                   onBlur={()=>setEditingEp(null)} onKeyDown={e=>e.key==="Enter"&&setEditingEp(null)}
                   style={{flex:1,fontSize:13,padding:"2px 4px",border:"0.5px solid #185FA5",borderRadius:4,outline:"none"}}/>
               ):(
-                <span onClick={()=>setEditingEp(ep.id)} style={{flex:1,fontSize:13,color:ep.status==="done"?"#aaa":"#1a1a1a",textDecoration:ep.status==="done"?"line-through":"none",cursor:"text"}} title="点击编辑">{i+1}. {ep.title||"第"+(i+1)+"集"}</span>
+                <span onClick={()=>{if(ep.taskId)setExpandedEp(expandedEp===ep.id?null:ep.id);else setEditingEp(ep.id);}}
+                  style={{flex:1,fontSize:13,color:ep.status==="done"?"#aaa":"#1a1a1a",textDecoration:ep.status==="done"?"line-through":"none",cursor:ep.taskId?"pointer":"text",display:"flex",alignItems:"center",gap:4}}
+                  title={ep.taskId?"点击展开步骤":"点击编辑"}>
+                  {ep.taskId&&<span style={{fontSize:10,color:"#185FA5",flexShrink:0}}>{expandedEp===ep.id?"▼":"▶"}</span>}
+                  <span style={{flex:1}}>{i+1}. {ep.title||"第"+(i+1)+"集"}</span>
+                  {ep.taskId&&(()=>{const t=(tasks||[]).find(x=>x.id===ep.taskId);return t&&t.subtasks?.length?<span style={{fontSize:10,color:"#aaa",flexShrink:0}}>{t.subtaskDone?.filter(Boolean).length||0}/{t.subtasks.length}</span>:null;})()}
+                </span>
               )}
               <button onClick={()=>setFocusEp(i)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"1px 5px",flexShrink:0}}>▶</button>
+              {!ep.pushedToBoard&&ep.status!=="done"&&<button onClick={()=>{onAddTaskToBoard({title:`[${course.title}] ${ep.title||"第"+(i+1)+"集"}`,project:2,priority:"normal",due:"",estimate:ep.duration||"",notes:`章节学习\n课程：${course.title}`});const eps=course.episodes.map((e,j)=>j===i?{...e,pushedToBoard:true}:e);onUpdate({...course,episodes:eps});}} style={{fontSize:10,color:"#0F6E56",background:"none",border:"0.5px solid #0F6E56",borderRadius:4,padding:"1px 6px",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>→板</button>}
+              {ep.pushedToBoard&&ep.status!=="done"&&<span style={{fontSize:10,color:"#bbb",flexShrink:0}}>✓板</span>}
               <button onClick={()=>{const eps=course.episodes.filter((_,j)=>j!==i);onUpdate({...course,episodes:eps});}} style={{fontSize:12,color:"#ddd",background:"none",border:"none",cursor:"pointer",padding:"1px 4px",flexShrink:0}} title="删除">✕</button>
-            </div>;
+            </div>
+            {expandedEp===ep.id&&ep.taskId&&(()=>{
+              const t=(tasks||[]).find(x=>x.id===ep.taskId);
+              if(!t)return null;
+              return(
+                <div style={{padding:"8px 12px 10px",background:"#F5F8FF",borderTop:"0.5px solid #e0e8f0"}}>
+                  <div style={{fontSize:11,color:"#185FA5",fontWeight:600,marginBottom:6}}>📋 子步骤</div>
+                  {(t.subtasks||[]).map((s,si)=>(
+                    <div key={si} onClick={()=>onToggleSub&&onToggleSub(t.id,si)}
+                      style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 8px",borderRadius:5,marginBottom:3,
+                        background:t.subtaskDone[si]?"rgba(15,110,86,.07)":"rgba(255,255,255,.8)",cursor:"pointer"}}>
+                      <div style={{width:14,height:14,borderRadius:"50%",border:t.subtaskDone[si]?"none":"1.5px solid #bbb",background:t.subtaskDone[si]?"#0F6E56":"transparent",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        {t.subtaskDone[si]&&<span style={{color:"#fff",fontSize:9,fontWeight:700}}>✓</span>}
+                      </div>
+                      <span style={{fontSize:12,color:t.subtaskDone[si]?"#aaa":"#444",textDecoration:t.subtaskDone[si]?"line-through":"none",lineHeight:1.5}}>{s}</span>
+                    </div>
+                  ))}
+                  {t.notes&&<div style={{marginTop:6,padding:"6px 8px",background:"rgba(24,95,165,.07)",borderRadius:5,fontSize:11,color:"#185FA5",lineHeight:1.6,whiteSpace:"pre-line"}}>{t.notes}</div>}
+                </div>
+              );
+            })()};
           })}
         </div>
       </div>
@@ -2603,7 +2711,7 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 // ══════════════════════════════════════════
 // §LEARNING  学习模块 LearningView
 // ══════════════════════════════════════════
-function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry}){
+function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub}){
   const [detail,setDetail]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showInbox,setShowInbox]=useState(false);
@@ -2629,7 +2737,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 
   if(detail){
     const course=courses.find(c=>c.id===detail);
-    if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey} onAddPomEntry={onAddPomEntry}/>;
+    if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey} onAddPomEntry={onAddPomEntry} tasks={tasks} onToggleSub={onToggleSub}/>;
   }
 
   return<div>
@@ -3820,56 +3928,58 @@ function PixelGrid({pixels,cellSize=3,style={}}){
 
 // Build cat pixel frames for different states
 function buildCatFrames(pal){
-  const [B,W,A,E,N]=pal; // body,belly,accent,eye,nose
+  const [B,W,A,E,N]=pal;
   const _=null;
-  // 16x14 pixel cat, 2 walk frames, celebrate, sleep, sad
+  // 12x14 — proper cat silhouette: pointed ears, round head, sitting body
   const idle=[
-    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
-    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
-    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
-    [B,E,B,B,E,B,B,B,B,E,B,B,E,B,_,_],
-    [B,B,N,B,B,B,B,B,B,B,N,B,B,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [_,B,B,_,B,B,_,_,B,B,_,B,B,_,_,_],
-    [_,B,B,_,B,B,_,_,B,B,_,B,B,_,_,_],
-    [_,A,A,_,A,A,_,_,A,A,_,A,A,_,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,B,B,_,_,_,_,_,B,B,_,_],  // ear tips
+    [B,B,B,B,_,_,_,B,B,B,B,_],  // ears
+    [B,B,B,B,B,B,B,B,B,B,B,_],  // forehead
+    [B,B,E,B,B,B,B,B,E,B,B,_],  // eyes
+    [B,B,B,B,N,B,B,N,B,B,B,_],  // nose + whisker dots
+    [B,B,B,W,W,W,W,W,B,B,B,_],  // muzzle
+    [_,B,B,B,B,B,B,B,B,B,_,_],  // chin
+    [_,B,W,W,W,W,W,W,W,B,_,_],  // upper body
+    [_,B,W,W,W,W,W,W,W,B,_,_],  // body
+    [_,B,W,W,W,W,W,W,W,B,_,_],  // body
+    [_,B,B,_,B,B,B,_,B,B,_,_],  // front legs
+    [_,A,A,_,A,A,A,_,A,A,_,_],  // paws
+    [_,_,_,_,_,_,_,_,_,_,B,B],  // tail base
+    [_,_,_,_,_,_,_,_,_,_,_,B],  // tail tip
   ];
+  // walk frame: tail up, one paw lifted
   const walk=[
-    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
-    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
-    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
-    [B,E,B,B,E,B,B,B,B,E,B,B,E,B,_,_],
-    [B,B,N,B,B,B,B,B,B,B,N,B,B,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [_,_,B,B,_,B,B,_,_,B,B,_,B,_,_,_],
-    [_,B,B,_,_,B,B,_,B,B,_,_,B,B,_,_],
-    [_,A,_,_,_,A,A,_,A,_,_,_,A,A,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,B,B,_,_,_,_,_,B,B,_,_],
+    [B,B,B,B,_,_,_,B,B,B,B,_],
+    [B,B,B,B,B,B,B,B,B,B,B,_],
+    [B,B,E,B,B,B,B,B,E,B,B,_],
+    [B,B,B,B,N,B,B,N,B,B,B,_],
+    [B,B,B,W,W,W,W,W,B,B,B,_],
+    [_,B,B,B,B,B,B,B,B,B,_,_],
+    [_,B,W,W,W,W,W,W,W,B,_,_],
+    [_,B,W,W,W,W,W,W,W,B,_,_],
+    [_,B,W,W,W,W,W,W,W,B,_,_],
+    [_,B,B,_,_,B,B,B,_,B,_,_],  // one paw lifted
+    [_,A,A,_,_,A,A,A,_,A,_,_],
+    [_,_,_,_,_,_,_,_,_,B,B,_],  // tail curved up
+    [_,_,_,_,_,_,_,_,_,_,B,_],
   ];
+  // sleep: curled up, eyes closed (lines for eyes)
   const sleep=[
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-    [_,_,B,B,_,_,_,_,_,_,B,B,_,_,_,_],
-    [_,B,B,B,B,_,_,_,_,B,B,B,B,_,_,_],
-    [B,B,B,B,B,B,_,_,B,B,B,B,B,B,_,_],
-    [B,A,B,B,A,B,B,B,B,A,B,B,A,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,W,W,W,W,W,W,W,W,W,W,W,W,B,_,_],
-    [B,B,B,B,B,B,B,B,B,B,B,B,B,B,_,_],
-    [_,B,B,B,B,B,B,B,B,B,B,B,B,_,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
-    [_,_,_,_,_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,B,B,_,_,B,B,_,_,_,_],
+    [_,B,B,B,B,B,B,B,B,_,_,_],
+    [_,B,B,A,B,B,B,A,B,B,_,_],  // closed eyes (accent = line)
+    [_,B,B,B,B,N,B,B,B,B,_,_],
+    [_,B,B,W,W,W,W,W,B,B,_,_],
+    [_,_,B,B,B,B,B,B,B,_,_,_],
+    [_,B,W,W,W,W,W,W,W,B,_,_],  // curled body
+    [B,W,W,W,W,W,W,W,W,W,B,_],
+    [B,B,B,B,B,B,B,B,B,B,B,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_],
+    [_,_,_,_,_,_,_,_,_,_,_,_],
   ];
   return{idle,walk,sleep,celebrate:idle,sad:sleep};
 }
@@ -3878,7 +3988,6 @@ function PixelCat({state="idle",size=3,darkMode=false}){
   const pal=useCatPalette();
   const frames=buildCatFrames(pal);
   const [frame,setFrame]=useState(0);
-  const [walkX,setWalkX]=useState(0);
   const [stars,setStars]=useState([]);
 
   // Frame cycling
@@ -3890,14 +3999,7 @@ function PixelCat({state="idle",size=3,darkMode=false}){
     setFrame(0);
   },[state]);
 
-  // Walk drift
-  useEffect(()=>{
-    if(state==="walk"){
-      const t=setInterval(()=>setWalkX(x=>{if(x>=50){return 0;}return x+2;}),60);
-      return()=>clearInterval(t);
-    }
-    setWalkX(0);
-  },[state]);
+  // Walk: no horizontal drift — just frame swap
 
   // Celebrate stars
   useEffect(()=>{
@@ -3915,7 +4017,7 @@ function PixelCat({state="idle",size=3,darkMode=false}){
 
   const anim={
     idle:"cat-idle 2.5s ease-in-out infinite",
-    walk:"none",
+    walk:"cat-walk-bob 0.5s ease-in-out infinite",
     celebrate:"cat-celebrate 0.5s ease-in-out infinite",
     sleep:"cat-sleep 3s ease-in-out infinite",
     sad:"cat-sad 2s ease-in-out infinite",
@@ -3929,7 +4031,7 @@ function PixelCat({state="idle",size=3,darkMode=false}){
           {["⭐","✨","💫","🌟"][Math.floor(Math.random()*4)]}
         </div>
       ))}
-      <div style={{animation:anim[state],transform:`translateX(${walkX}px)`,transition:state==="walk"?"none":"transform .3s"}}>
+      <div style={{animation:anim[state]}}>
         <PixelGrid pixels={pixels} cellSize={size}/>
       </div>
       {state==="sleep"&&(
@@ -4551,8 +4653,39 @@ function App(){
     setCourses(cs=>{const next=cs.map(c=>c.id===id?{...c,archived:true,active:false}:c);triggerSave(tasks,journal,futureLog,nextId,next);return next;});
   }
 
-  function toggleTask(id){setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));}
-  function toggleSub(tid,i){setTasksAndSync(ts=>ts.map(t=>{if(t.id!==tid)return t;const sd=[...t.subtaskDone];sd[i]=!sd[i];return{...t,subtaskDone:sd};}));}
+  function toggleTask(id){
+    setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
+    // 同步 episode 状态
+    setCourses(cs=>{
+      const task=tasksRef.current.find(t=>t.id===id);
+      if(!task)return cs;
+      const newDone=!task.done;
+      const next=cs.map(c=>{
+        const eps=c.episodes||[];
+        if(!eps.some(e=>e.taskId===id))return c;
+        return{...c,episodes:eps.map(e=>e.taskId===id?{...e,status:newDone?"done":"todo"}:e)};
+      });
+      if(next.some((c,i)=>c!==cs[i]))triggerSave(undefined,undefined,undefined,undefined,next);
+      return next;
+    });
+  }
+  function toggleSub(tid,i){
+    setTasksAndSync(ts=>ts.map(t=>{if(t.id!==tid)return t;const sd=[...t.subtaskDone];sd[i]=!sd[i];return{...t,subtaskDone:sd};}));
+    // 子步骤全部完成时同步 episode 为 done
+    setCourses(cs=>{
+      const task=tasksRef.current.find(t=>t.id===tid);
+      if(!task)return cs;
+      const newSd=[...task.subtaskDone];newSd[i]=!newSd[i];
+      const allDone=newSd.every(Boolean);
+      const next=cs.map(c=>{
+        const eps=c.episodes||[];
+        if(!eps.some(e=>e.taskId===tid))return c;
+        return{...c,episodes:eps.map(e=>e.taskId===tid?{...e,status:allDone?"done":"doing"}:e)};
+      });
+      if(next.some((c,j)=>c!==cs[j]))triggerSave(undefined,undefined,undefined,undefined,next);
+      return next;
+    });
+  }
   function toggleExpand(id){setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,expanded:!t.expanded}:t));}
   function saveDetail(u){setTasksAndSync(ts=>ts.map(t=>t.id===u.id?u:t));setDetail(null);}
   function delTask(id){setTasksAndSync(ts=>ts.filter(t=>t.id!==id));setDetail(null);}
@@ -4582,6 +4715,17 @@ function App(){
     setNextId(newNid);
     nextIdRef.current=newNid;
     setTasksAndSync(ts=>{const next=[...ts,t];triggerSave(next,undefined,undefined,newNid,undefined);return next;});
+    // 补全对应 episode 的 taskId（episode 里用 taskTitle 做临时 key）
+    setCourses(cs=>{
+      const next=cs.map(c=>{
+        const eps=c.episodes||[];
+        const needsPatch=eps.some(e=>e.taskTitle===t.title&&!e.taskId);
+        if(!needsPatch)return c;
+        return{...c,episodes:eps.map(e=>e.taskTitle===t.title&&!e.taskId?{...e,taskId:t.id}:e)};
+      });
+      if(next.some((c,i)=>c!==cs[i]))triggerSave(undefined,undefined,undefined,undefined,next);
+      return next;
+    });
   }
   function addQuick(){if(!quick.trim())return;addTask({title:quick.trim(),project:1,due:"",priority:"normal"});setQuick("");}
   function addModal(){if(!nTask.title.trim())return;addTask(nTask);setShowAdd(false);setNTask({title:"",project:1,due:todayStr(),startDate:"",priority:"today"});}
@@ -4783,7 +4927,7 @@ function App(){
         {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
-        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry}/>}
+        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub}/>}
         {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey} onSaveLayers={bl=>{setBlockingLayers(bl);blockingLayersRef.current=bl;triggerSave();}}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
@@ -4804,7 +4948,7 @@ function App(){
       </div>
     </div>
 
-    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask}/>
+    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask} courses={courses} onUpdateCourse={updateCourse}/>
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
