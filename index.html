@@ -91,6 +91,9 @@ const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:fa
 /* ═══════════════════════════════════════════
    DATE HELPERS
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §UTILS  工具函数 日期/LS/格式化
+// ══════════════════════════════════════════
 function todayStr(){return new Date().toISOString().split("T")[0];}
 function daysFromNow(n){const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().split("T")[0];}
 function yyyymmdd(d){return d.toISOString().split("T")[0];}
@@ -164,6 +167,74 @@ async function gistFindOrCreate(token){
 /* ═══════════════════════════════════════════
    LOCAL STORAGE (fallback + settings)
 ═══════════════════════════════════════════ */
+
+// ══════════════════════════════════════════
+// §DATA  纯数据区（修改数据只看这里）
+// ══════════════════════════════════════════
+
+// ── 学习模块默认值 ──
+const BLANK_COURSE={
+  id:0,title:"",platform:"bilibili",link:"",
+  totalEpisodes:0,episodes:[],
+  notes:[],assignments:[],
+  active:true,archived:false,
+  lastStudied:todayStr(),createdAt:"",
+  color:"#185FA5",
+};
+
+const BLANK_EPISODE={id:0,title:"",status:"todo",duration:"",noteIds:[]};
+// status: todo | doing | done | review
+
+const BLANK_NOTE={
+  id:0,episodeId:null,courseId:0,
+  title:"",content:"",filePath:"",
+  aiSummary:"",aiActions:[],
+  createdAt:"",updatedAt:"",
+};
+
+// ── 像素猫配色（8种）[body, belly, accent, eye, nose] ──
+const CAT_PALETTES=[
+  ["#F4A261","#FFDBB5","#E76F51","#4A3728","#FF8FA3"], // orange
+  ["#A8DADC","#E8F8F8","#457B9D","#2C3E50","#FFB3C6"], // teal
+  ["#9B89C4","#E8E0F5","#6B5CA5","#2C1654","#FFB3C6"], // purple
+  ["#F8C8D4","#FFF0F5","#E8809A","#4A2030","#C8A0B0"], // pink
+  ["#8BC34A","#F1F8E9","#558B2F","#1B3A0A","#FFB3C6"], // green
+  ["#90CAF9","#E3F2FD","#1565C0","#0D2137","#FFB3C6"], // blue
+  ["#FFCC80","#FFF8E1","#FF8F00","#3E2000","#FF8FA3"], // yellow
+  ["#CE93D8","#F3E5F5","#8E24AA","#2A0040","#FFB3C6"], // violet
+];
+// ── Routine 系统配置 ──
+const ROUTINE_STORAGE_KEY="zj_routines_v2";
+const DEFAULT_ROUTINES=[
+  {
+    id:1,name:"🌅 早晨启动",color:"#FFB3C6",emoji:"🌅",scheduleType:"morning",
+    steps:[
+      {id:1,type:"fixed",title:"喝一大杯水",duration:2,note:"站起来，去厨房，不要看手机"},
+      {id:2,type:"fixed",title:"拉伸放松",duration:5,note:"颈部、肩膀、腰部各绕圈10次"},
+      {id:3,type:"fixed",title:"整理桌面",duration:3,note:"清空桌面，只留今天需要的东西"},
+      {id:4,type:"fixed",title:"深呼吸",duration:3,note:"4秒吸气，7秒屏气，8秒呼出，重复4次"},
+    ]
+  },
+  {
+    id:2,name:"📚 学习流程",color:"#A8DAFF",emoji:"📚",scheduleType:"anytime",
+    steps:[
+      {id:1,type:"fixed",title:"准备材料",duration:3,note:"打开课本/软件，准备笔记本，喝水"},
+      {id:2,type:"task_slot",label:"深度学习",duration:45,taskIndex:0},
+      {id:3,type:"fixed",title:"起立活动",duration:5,note:"起来走走，做几个深蹲，喝水"},
+      {id:4,type:"task_slot",label:"继续学习",duration:45,taskIndex:1},
+      {id:5,type:"fixed",title:"今日收尾",duration:5,note:"写下今天学了什么，明天从哪继续"},
+    ]
+  },
+  {
+    id:3,name:"🌙 收尾流程",color:"#D4B8FF",emoji:"🌙",scheduleType:"evening",
+    steps:[
+      {id:1,type:"fixed",title:"整理工作区",duration:3,note:"把桌面整理干净，关掉不需要的标签页"},
+      {id:2,type:"fixed",title:"记录今日产出",duration:5,note:"写下今天完成了什么，哪怕很小"},
+      {id:3,type:"fixed",title:"给明天写一句话",duration:2,note:"明天第一件事是什么？"},
+    ]
+  },
+];
+
 function lsGet(k,def=null){try{const v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;}}
 function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
 
@@ -180,6 +251,9 @@ const SAMPLE_TASKS=[
 /* ═══════════════════════════════════════════
    TINY UI COMPONENTS
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §BASE_UI  基础UI组件 Check/Tag/TaskRow/TaskDetail
+// ══════════════════════════════════════════
 function Check({checked,onClick,size=18}){
   return<div onClick={onClick} style={{width:size,height:size,borderRadius:"50%",border:checked?"none":"1.5px solid #bbb",background:checked?"#185FA5":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0,transition:"all .15s"}}>
     {checked&&<span style={{color:"#fff",fontSize:size*.55,fontWeight:700}}>✓</span>}
@@ -334,6 +408,9 @@ function TaskDetail({task,onClose,onSave,onDelete}){
 /* ═══════════════════════════════════════════
    EVENING MIGRATION PANEL
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §MIGRATION  迁移面板 / 脑倾倒 / 月度回顾
+// ══════════════════════════════════════════
 function MigrationPanel({tasks,onMigrate,onClose}){
   const pending=tasks.filter(t=>!t.done&&t.due<=todayStr());
   const [decisions,setDecisions]=useState(()=>Object.fromEntries(pending.map(t=>[t.id,"tomorrow"])));
@@ -476,6 +553,9 @@ function MonthlyReview({tasks,onClose}){
 /* ═══════════════════════════════════════════
    FUTURE LOG
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §FUTURELOG  未来清单 FutureLog
+// ══════════════════════════════════════════
 function FutureLog({futureLog,onUpdate,onMoveToTasks}){
   const [input,setInput]=useState("");
   const [selMonth,setSelMonth]=useState(()=>{const d=new Date();return monthKey(d.getFullYear(),d.getMonth()+1);});
@@ -522,6 +602,9 @@ function FutureLog({futureLog,onUpdate,onMoveToTasks}){
 /* ═══════════════════════════════════════════
    GANTT
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §GANTT  甘特图 GanttView
+// ══════════════════════════════════════════
 function GanttView({tasks,onOpen}){
   const today=todayStr();
   const active=tasks.filter(t=>t.startDate&&t.due);
@@ -613,6 +696,9 @@ function ProjectPanel({project,tasks,onOpen,onBack}){
 /* ═══════════════════════════════════════════
    CALENDAR + BULLET JOURNAL
 ═══════════════════════════════════════════ */
+// ══════════════════════════════════════════
+// §CALENDAR  日历视图 CalendarView
+// ══════════════════════════════════════════
 function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
   const [curMonth,setCurMonth]=useState(()=>{const d=new Date();return{y:d.getFullYear(),m:d.getMonth()};});
   const [selDay,setSelDay]=useState(todayStr());
@@ -709,6 +795,9 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
    AI PANEL (Gemini)
 ═══════════════════════════════════════════ */
 // ── Markdown Renderer ──
+// ══════════════════════════════════════════
+// §MD_UTILS  Markdown渲染工具函数
+// ══════════════════════════════════════════
 function renderMarkdown(text){
   if(!text)return null;
   const lines=text.split("\n");
@@ -880,6 +969,9 @@ function parseExternalPlan(content){
   return[];
 }
 
+// ══════════════════════════════════════════
+// §AIPANEL  AI助手面板 AIPanel
+// ══════════════════════════════════════════
 function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask}){
   // ── history: [{id, name, group, msgs:[{role,text,images}], createdAt}]
   const [history,setHistory]=useState(()=>loadAIHistory());
@@ -1413,6 +1505,9 @@ function ConvItem({conv,active,onSelect,onDelete,onRename,onSetGroup,allGroups})
 }
 
 // ── Import Plan Modal ──
+// ══════════════════════════════════════════
+// §IMPORT  导入计划 ImportPlanModal
+// ══════════════════════════════════════════
 function ImportPlanModal({onClose,onImport}){
   const [tab,setTab]=useState("paste"); // paste | file | format
   const [text,setText]=useState("");
@@ -1539,6 +1634,9 @@ function ImportPlanModal({onClose,onImport}){
 }
 
 
+// ══════════════════════════════════════════
+// §SETTINGS  设置面板 SettingsPanel
+// ══════════════════════════════════════════
 function SettingsPanel({onClose,onSynced}){
   const [token,setToken]=useState(()=>lsGet("zj_gh_token",""));
   const [gistId,setGistId]=useState(()=>lsGet("zj_gist_id",""));
@@ -1604,25 +1702,7 @@ const PLATFORMS=[
   {id:"other",name:"其他",color:"#888"},
 ];
 
-const BLANK_COURSE={
-  id:0,title:"",platform:"bilibili",link:"",
-  totalEpisodes:0,episodes:[],
-  notes:[],assignments:[],
-  active:true,archived:false,
-  lastStudied:todayStr(),createdAt:"",
-  color:"#185FA5",
-};
-
-const BLANK_EPISODE={id:0,title:"",status:"todo",duration:"",noteIds:[]};
-// status: todo | doing | done | review
-
-const BLANK_NOTE={
-  id:0,episodeId:null,courseId:0,
-  title:"",content:"",filePath:"",
-  aiSummary:"",aiActions:[],
-  createdAt:"",updatedAt:"",
-};
-
+// ← BLANK_COURSE / BLANK_EPISODE / BLANK_NOTE 已移至顶部 §DATA 区
 function daysSince(dateStr){
   if(!dateStr)return 999;
   return Math.floor((Date.now()-new Date(dateStr).getTime())/86400000);
@@ -2221,6 +2301,9 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 }
 
 // ── Learning View (main) ──
+// ══════════════════════════════════════════
+// §LEARNING  学习模块 LearningView
+// ══════════════════════════════════════════
 function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry}){
   const [detail,setDetail]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
@@ -2310,6 +2393,9 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 // ═══════════════════════════════════════════
 // FEATURE 1: TODAY LAUNCH RITUAL (ADHD CONTRACT MODE)
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §LAUNCH  启动仪式 LaunchRitual
+// ══════════════════════════════════════════
 function LaunchRitual({tasks,onDismiss,geminiKey}){
   const [step,setStep]=useState(0); // 0=greeting 1=pick-tasks 2=confirm
   const [weather,setWeather]=useState(null);
@@ -2503,6 +2589,9 @@ function LaunchRitual({tasks,onDismiss,geminiKey}){
 // ═══════════════════════════════════════════
 // BLOCK BREAKER: 严苛节点拆解 + 每日打卡
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §BLOCKBREAKER  节点拆解 BlockBreaker
+// ══════════════════════════════════════════
 function BlockBreaker({tasks,onAddTask,onUpdateTask,geminiKey,onClose}){
   const [step,setStep]=useState("select"); // select | config | breaking | done
   const [selTask,setSelTask]=useState(null);
@@ -2706,6 +2795,9 @@ function BlockBreaker({tasks,onAddTask,onUpdateTask,geminiKey,onClose}){
 // ═══════════════════════════════════════════
 // BLOCKING VIEW: 全局框架视图
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §BLOCKING  全局框架 BlockingView
+// ══════════════════════════════════════════
 function BlockingView({tasks,onUpdate,onAddTask,geminiKey}){
   const [showSetup,setShowSetup]=useState(false);
   const [projName,setProjName]=useState("");
@@ -2906,6 +2998,9 @@ function BlockingView({tasks,onUpdate,onAddTask,geminiKey}){
 // ═══════════════════════════════════════════
 // DAILY CHECKIN: 每日产出打卡
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §CHECKIN  每日打卡 DailyCheckIn
+// ══════════════════════════════════════════
 function DailyCheckIn({task,onSave,onClose}){
   const [output,setOutput]=useState(task.checkInOutput||"");
   const [file,setFile]=useState(null);
@@ -3006,6 +3101,9 @@ function getTaskDifficulty(task){
 // ═══════════════════════════════════════════
 // FEATURE 3: SPACED REPETITION REVIEW
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §REVIEW  间隔复习面板 ReviewPanel
+// ══════════════════════════════════════════
 function ReviewPanel({notes,courses,onUpdateNote,onClose}){
   // Collect all notes with AI summaries that are due for review
   const today=todayStr();
@@ -3087,6 +3185,9 @@ function ReviewPanel({notes,courses,onUpdateNote,onClose}){
 // ═══════════════════════════════════════════
 // FEATURE 4: WEEKLY PLAN VIEW
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §WEEKLY  本周计划视图 WeeklyView
+// ══════════════════════════════════════════
 function WeeklyView({tasks,onUpdate,onAddTask}){
   const [weekOffset,setWeekOffset]=useState(0);
   const [showWeekPlan,setShowWeekPlan]=useState(false);
@@ -3174,6 +3275,9 @@ function WeeklyView({tasks,onUpdate,onAddTask}){
 // ═══════════════════════════════════════════
 // FEATURE 5: HABIT TRACKER
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §HABITS  习惯追踪 HabitTracker
+// ══════════════════════════════════════════
 function HabitTracker({habits,onUpdateHabits}){
   const today=todayStr();
   const [showManage,setShowManage]=useState(false);
@@ -3328,6 +3432,9 @@ function injectPWA(){
 // ═══════════════════════════════════════════
 // FEATURE 8: POMODORO HISTORY
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §POMODORO  番茄统计 PomodoroStats
+// ══════════════════════════════════════════
 function PomodoroStats({log}){
   // log: [{date, count, minutes}]
   const today=todayStr();
@@ -3353,6 +3460,9 @@ function PomodoroStats({log}){
 // ═══════════════════════════════════════════
 // SOUND ENGINE — cute Web Audio tones
 // ═══════════════════════════════════════════
+// ══════════════════════════════════════════
+// §SOUND  音效引擎 SoundEngine
+// ══════════════════════════════════════════
 const SoundEngine=(()=>{
   let ctx=null;
   function getCtx(){if(!ctx)ctx=new(window.AudioContext||window.webkitAudioContext)();return ctx;}
@@ -3387,18 +3497,11 @@ const SoundEngine=(()=>{
 // PIXEL CAT — 16-bit style, random color
 // ═══════════════════════════════════════════
 // Cat state: idle | walk | celebrate | sleep | sad | run
-// Color palettes: [body, belly, accent, eye, nose]
-const CAT_PALETTES=[
-  ["#F4A261","#FFDBB5","#E76F51","#4A3728","#FF8FA3"], // orange
-  ["#A8DADC","#E8F8F8","#457B9D","#2C3E50","#FFB3C6"], // teal
-  ["#9B89C4","#E8E0F5","#6B5CA5","#2C1654","#FFB3C6"], // purple
-  ["#F8C8D4","#FFF0F5","#E8809A","#4A2030","#C8A0B0"], // pink
-  ["#8BC34A","#F1F8E9","#558B2F","#1B3A0A","#FFB3C6"], // green
-  ["#90CAF9","#E3F2FD","#1565C0","#0D2137","#FFB3C6"], // blue
-  ["#FFCC80","#FFF8E1","#FF8F00","#3E2000","#FF8FA3"], // yellow
-  ["#CE93D8","#F3E5F5","#8E24AA","#2A0040","#FFB3C6"], // violet
-];
+// ← CAT_PALETTES 已移至顶部 §DATA 区
 
+// ══════════════════════════════════════════
+// §PIXELCAT  像素猫系统 PixelCat/StatusCat
+// ══════════════════════════════════════════
 function useCatPalette(){
   const [pal]=useState(()=>CAT_PALETTES[Math.floor(Math.random()*CAT_PALETTES.length)]);
   return pal;
@@ -3568,39 +3671,7 @@ function StatusCat({tasks,darkMode}){
   );
 }
 
-// ═══════════════════════════════════════════
-// ROUTINE SYSTEM
-// ═══════════════════════════════════════════
-const ROUTINE_STORAGE_KEY="zj_routines_v2";
-const DEFAULT_ROUTINES=[
-  {
-    id:1,name:"🌅 早晨启动",color:"#FFB3C6",emoji:"🌅",scheduleType:"morning",
-    steps:[
-      {id:1,type:"fixed",title:"喝一大杯水",duration:2,note:"站起来，去厨房，不要看手机"},
-      {id:2,type:"fixed",title:"拉伸放松",duration:5,note:"颈部、肩膀、腰部各绕圈10次"},
-      {id:3,type:"fixed",title:"整理桌面",duration:3,note:"清空桌面，只留今天需要的东西"},
-      {id:4,type:"fixed",title:"深呼吸",duration:3,note:"4秒吸气，7秒屏气，8秒呼出，重复4次"},
-    ]
-  },
-  {
-    id:2,name:"📚 学习流程",color:"#A8DAFF",emoji:"📚",scheduleType:"anytime",
-    steps:[
-      {id:1,type:"fixed",title:"准备材料",duration:3,note:"打开课本/软件，准备笔记本，喝水"},
-      {id:2,type:"task_slot",label:"深度学习",duration:45,taskIndex:0},
-      {id:3,type:"fixed",title:"起立活动",duration:5,note:"起来走走，做几个深蹲，喝水"},
-      {id:4,type:"task_slot",label:"继续学习",duration:45,taskIndex:1},
-      {id:5,type:"fixed",title:"今日收尾",duration:5,note:"写下今天学了什么，明天从哪继续"},
-    ]
-  },
-  {
-    id:3,name:"🌙 收尾流程",color:"#D4B8FF",emoji:"🌙",scheduleType:"evening",
-    steps:[
-      {id:1,type:"fixed",title:"整理工作区",duration:3,note:"把桌面整理干净，关掉不需要的标签页"},
-      {id:2,type:"fixed",title:"记录今日产出",duration:5,note:"写下今天完成了什么，哪怕很小"},
-      {id:3,type:"fixed",title:"给明天写一句话",duration:2,note:"明天第一件事是什么？"},
-    ]
-  },
-];
+// ← ROUTINE_STORAGE_KEY / DEFAULT_ROUTINES 已移至顶部 §DATA 区
 
 function loadRoutines(){
   try{const r=JSON.parse(localStorage.getItem(ROUTINE_STORAGE_KEY));return r&&r.length?r:DEFAULT_ROUTINES;}
@@ -3609,6 +3680,9 @@ function loadRoutines(){
 function saveRoutines(r){try{localStorage.setItem(ROUTINE_STORAGE_KEY,JSON.stringify(r));}catch(e){}}
 
 // ── Routine Manager (edit templates) ──
+// ══════════════════════════════════════════
+// §ROUTINE_MGR  Routine管理器 RoutineManager
+// ══════════════════════════════════════════
 function RoutineManager({onClose,darkMode}){
   const [routines,setRoutines]=useState(loadRoutines);
   const [editing,setEditing]=useState(null); // routine id being edited
@@ -3718,6 +3792,9 @@ function RoutineManager({onClose,darkMode}){
 }
 
 // ── Routine Selector ──
+// ══════════════════════════════════════════
+// §ROUTINE_SEL  Routine选择器 RoutineSelector
+// ══════════════════════════════════════════
 function RoutineSelector({tasks,onStart,onClose,darkMode}){
   const routines=loadRoutines();
   const todayTasks=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today")).slice(0,4);
@@ -3776,6 +3853,9 @@ function RoutineSelector({tasks,onStart,onClose,darkMode}){
 }
 
 // ── Routine Fullscreen Executor ──
+// ══════════════════════════════════════════
+// §ROUTINE_EXEC  Routine执行引擎 RoutineExecutor
+// ══════════════════════════════════════════
 function RoutineExecutor({routine,tasks,onComplete,onExit,onTaskDone,darkMode}){
   const dm=darkMode;
 
@@ -4008,6 +4088,9 @@ function RoutineExecutor({routine,tasks,onComplete,onExit,onTaskDone,darkMode}){
   );
 }
 
+// ══════════════════════════════════════════
+// §APP  主应用 App
+// ══════════════════════════════════════════
 function App(){
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [darkMode,setDarkMode]=useState(()=>lsGet("zj_dark_mode",false));
