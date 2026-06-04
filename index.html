@@ -125,11 +125,42 @@ async function gistLoad(token,gistId){
   return raw?JSON.parse(raw):null;
 }
 
+// 剥离 base64 图片，只存 key 引用；图片持久化在 localStorage
+function stripImagesForGist(payload){
+  // 处理 tasks 里的 checkInPreview 和 attachments.data
+  const tasks=(payload.tasks||[]).map(t=>{
+    const out={...t};
+    if(out.checkInPreview&&out.checkInPreview.startsWith("data:")){      const k="zj_img_ci_"+t.id;      try{localStorage.setItem(k,out.checkInPreview);}catch(e){}      out.checkInPreview="__ls:"+k;    }
+    if(out.attachments&&out.attachments.length){      out.attachments=out.attachments.map(a=>{        if(a.data&&a.data.startsWith("data:")){          const k="zj_img_att_"+t.id+"_"+a.name;          try{localStorage.setItem(k,a.data);}catch(e){}          return{...a,data:"__ls:"+k};        }        return a;      });    }
+    return out;
+  });
+  // 处理 courses 里的 assignments.refImage 和 submissions.images
+  const courses=(payload.courses||[]).map(c=>{
+    const assignments=(c.assignments||[]).map(a=>{
+      const out={...a};
+      if(out.refImage&&out.refImage.startsWith("data:")){        const k="zj_img_ref_"+c.id+"_"+a.id;        try{localStorage.setItem(k,out.refImage);}catch(e){}        out.refImage="__ls:"+k;      }
+      if(out.submissions){        out.submissions=out.submissions.map(s=>{          const ss={...s};          if(ss.image&&ss.image.startsWith("data:")){            const k="zj_img_sub_"+a.id+"_"+s.id;            try{localStorage.setItem(k,ss.image);}catch(e){}            ss.image="__ls:"+k;          }          if(ss.images&&ss.images.length){            ss.images=ss.images.map((img,i)=>{              if(img&&img.startsWith("data:")){                const k="zj_img_subi_"+a.id+"_"+s.id+"_"+i;                try{localStorage.setItem(k,img);}catch(e){}                return"__ls:"+k;              }              return img;            });          }          return ss;        });      }
+      return out;
+    });
+    return{...c,assignments};
+  });
+  return{...payload,tasks,courses};
+}
+
+// 加载时恢复 __ls: 引用为实际 base64
+function restoreImagesFromLS(payload){
+  function res(v){if(typeof v==="string"&&v.startsWith("__ls:")){    try{return localStorage.getItem(v.slice(5))||v;}catch(e){return v;}  }return v;}
+  const tasks=(payload.tasks||[]).map(t=>({...t,    checkInPreview:res(t.checkInPreview),    attachments:(t.attachments||[]).map(a=>({...a,data:res(a.data)}))  }));
+  const courses=(payload.courses||[]).map(c=>({...c,    assignments:(c.assignments||[]).map(a=>({...a,      refImage:res(a.refImage),      submissions:(a.submissions||[]).map(s=>({...s,        image:res(s.image),        images:(s.images||[]).map(img=>res(img))      }))    }))  }));
+  return{...payload,tasks,courses};
+}
+
 async function gistSave(token,gistId,payload){
+  const stripped=stripImagesForGist(payload);
   const res=await fetch(`https://api.github.com/gists/${gistId}`,{
     method:"PATCH",
     headers:{Authorization:`token ${token}`,"Content-Type":"application/json"},
-    body:JSON.stringify({files:{[GIST_FILENAME]:{content:JSON.stringify(payload,null,2)}}}),
+    body:JSON.stringify({files:{[GIST_FILENAME]:{content:JSON.stringify(stripped,null,2)}}}),
   });
   if(!res.ok)throw new Error("保存失败");
   return res.json();
@@ -4563,8 +4594,9 @@ function App(){
     const gid=gistIdRef.current||gistId;
     if(!tok||!gid)return;
     setSyncStatus("saving");
-    gistLoad(tok,gid).then(data=>{
+    gistLoad(tok,gid).then(rawData=>{
       isFirstLoad.current=false; // Mark load done FIRST before setting state
+      const data=rawData?restoreImagesFromLS(rawData):rawData;
       if(data){
         if(data.tasks&&data.tasks.length>0)setTasks(data.tasks.map(t=>({...BLANK_TASK,...t})));
         if(data.journal&&Object.keys(data.journal).length>0)setJournal(data.journal);
@@ -4578,7 +4610,21 @@ function App(){
       }
     }).catch(e=>{
       console.error("Gist load failed:",e);
-      setSyncStatus("error");
+      // JSON 损坏时给出可操作提示
+      if(e instanceof SyntaxError){
+        setSyncStatus("error");
+        console.warn("Gist JSON 损坏，将在下次保存时覆盖修复。如数据未丢失请继续使用，本地数据仍完整。");
+        // 用本地数据强制覆盖修复损坏的 Gist
+        setTimeout(()=>{
+          const tok=ghTokenRef.current;const gid=gistIdRef.current;
+          if(tok&&gid){
+            isFirstLoad.current=false;
+            triggerSave();
+          }
+        },2000);
+      } else {
+        setSyncStatus("error");
+      }
       isFirstLoad.current=false;
     });
   }
