@@ -2436,7 +2436,7 @@ function EditCourseModal({course,onSave,onClose}){
 }
 
 // ── Course Detail ──
-function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddPomEntry}){
+function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub}){
   const [showEdit,setShowEdit]=useState(false);
   const [editingEp,setEditingEp]=useState(null);
   const [showAddNote,setShowAddNote]=useState(false);
@@ -2819,7 +2819,7 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 // ══════════════════════════════════════════
 // §LEARNING  学习模块 LearningView
 // ══════════════════════════════════════════
-function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub}){
+function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub,onSaveInbox}){
   const [detail,setDetail]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showInbox,setShowInbox]=useState(false);
@@ -2832,7 +2832,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
   const current=active.slice(0,3);
   const overflow=active.slice(3);
 
-  function saveInbox(items){setInbox(items);lsSet("zj_learning_inbox",items);}
+  function saveInbox(items){setInbox(items);lsSet("zj_learning_inbox",items);if(onSaveInbox)onSaveInbox(items);}
   function addToInbox(){
     if(!inboxText.trim())return;
     saveInbox([...inbox,{id:Date.now(),text:inboxText.trim(),date:todayStr()}]);
@@ -2911,13 +2911,14 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
 // ══════════════════════════════════════════
 // §LAUNCH  启动仪式 LaunchRitual
 // ══════════════════════════════════════════
-function LaunchRitual({tasks,onDismiss,geminiKey}){
+function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
   const [step,setStep]=useState(0); // 0=greeting 1=pick-tasks 2=confirm
   const [weather,setWeather]=useState(null);
   const [greeting,setGreeting]=useState("");
   const [aiSuggestion,setAiSuggestion]=useState("");
   const [aiLoading,setAiLoading]=useState(false);
   const [selected,setSelected]=useState([]); // selected task ids
+  const [newTaskInput,setNewTaskInput]=useState("");
   const hour=new Date().getHours();
 
   useEffect(()=>{
@@ -3038,8 +3039,38 @@ function LaunchRitual({tasks,onDismiss,geminiKey}){
         )}
 
         {allPickable.length===0&&(
-          <div style={{textAlign:"center",padding:"32px 0",color:"rgba(255,255,255,.35)",fontSize:14}}>
-            任务列表是空的，今天先休息 🎉
+          <div style={{textAlign:"center",padding:"20px 0",color:"rgba(255,255,255,.35)",fontSize:14}}>
+            任务列表是空的，先新建一个吧
+          </div>
+        )}
+
+        {/* 快速新建任务 */}
+        {onAddTask&&selected.length<3&&(
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.25)",marginBottom:6,letterSpacing:".06em",textTransform:"uppercase"}}>+ 新建今日任务</div>
+            <div style={{display:"flex",gap:8}}>
+              <input value={newTaskInput} onChange={e=>setNewTaskInput(e.target.value)}
+                onKeyDown={e=>{
+                  if(e.key==="Enter"&&newTaskInput.trim()&&onAddTask){
+                    const t={title:newTaskInput.trim(),priority:"today",due:todayStr(),project:1,estimate:""};
+                    onAddTask(t);
+                    setNewTaskInput("");
+                  }
+                }}
+                placeholder="写下任务名，回车添加"
+                style={{flex:1,padding:"10px 12px",borderRadius:8,border:"0.5px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"#fff",fontSize:13,outline:"none"}}/>
+              <button
+                onClick={()=>{
+                  if(newTaskInput.trim()&&onAddTask){
+                    const t={title:newTaskInput.trim(),priority:"today",due:todayStr(),project:1,estimate:""};
+                    onAddTask(t);
+                    setNewTaskInput("");
+                  }
+                }}
+                style={{padding:"10px 14px",borderRadius:8,border:"none",background:"rgba(24,95,165,.6)",color:"#fff",fontSize:13,cursor:"pointer",whiteSpace:"nowrap"}}>
+                添加
+              </button>
+            </div>
           </div>
         )}
 
@@ -4652,6 +4683,7 @@ function App(){
   const habitsRef=useRef([]);
   const pomLogRef=useRef([]);
   const blockingLayersRef=useRef(lsGet("zj_blocking_layers",[]));
+  const inboxRef=useRef(lsGet("zj_learning_inbox",[]));
 
   // Keep refs in sync with state
   useEffect(()=>{tasksRef.current=tasks;},[tasks]);
@@ -4682,6 +4714,7 @@ function App(){
         if(data.nextId){setNextId(data.nextId);lsSet("zj_next_id",data.nextId);}
         if(data.blockingLayers&&data.blockingLayers.length>0){setBlockingLayers(data.blockingLayers);lsSet("zj_blocking_layers",data.blockingLayers);}
         if(data.habits&&data.habits.length>0){setHabits(data.habits);lsSet("zj_habits",data.habits);}
+        if(data.learningInbox&&data.learningInbox.length>0){lsSet("zj_learning_inbox",data.learningInbox);inboxRef.current=data.learningInbox;}
         if(data.pomLog&&data.pomLog.length>0){setPomLog(data.pomLog);lsSet("zj_pom_log",data.pomLog);}
         if(data.aiHistory&&data.aiHistory.length>0){saveAIHistory(data.aiHistory);}
         setSyncStatus("saved");
@@ -4748,7 +4781,8 @@ function App(){
         habits:habitsRef.current,
         pomLog:pomLogRef.current,
         nextId:nidToSave,
-        blockingLayers:blockingLayersRef.current
+        blockingLayers:blockingLayersRef.current,
+        learningInbox:inboxRef.current
       })
         .then(()=>setSyncStatus("saved"))
         .catch(e=>{setSyncStatus("error");console.error("Gist save failed:",e);});
@@ -5057,7 +5091,7 @@ function App(){
         {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
-        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub}/>}
+        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub} onSaveInbox={items=>{inboxRef.current=items;triggerSave();}}/>}
         {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey} onSaveLayers={bl=>{setBlockingLayers(bl);blockingLayersRef.current=bl;triggerSave();}}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
@@ -5083,7 +5117,7 @@ function App(){
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
     {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
-    {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey}/>}
+    {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey} onAddTask={addTask}/>}
     {showReview&&<ReviewPanel courses={courses} onUpdateNote={updateCourseNote} onClose={()=>setShowReview(false)}/>}
     {showSettings&&<SettingsPanel onClose={()=>setShowSettings(false)} onSynced={(t,id)=>{setGhToken(t);setGistId(id);ghTokenRef.current=t;gistIdRef.current=id;isFirstLoad.current=false;setTimeout(loadFromGist,100);}}/>}
     {showBlockBreaker&&<BlockBreaker tasks={tasks} onAddTask={addTask} onUpdateTask={saveDetail} geminiKey={geminiKey} onClose={()=>setShowBlockBreaker(false)}/>}
