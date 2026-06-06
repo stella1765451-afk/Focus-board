@@ -1466,7 +1466,19 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
     // 给每个 task 加 nextId（addTask 内部会分配，这里提前记录 courseId）
     toAdd.forEach(t=>onAddTask(t));
     setTaskPreview(null);
-    setMsgs(m=>[...m,{role:"ai",text:"✓ 已将 "+toAdd.length+" 个任务加入专注板",images:[]}]);
+    // 生成任务记录快照，保留在对话历史里
+    const courseNote=taskPreview.targetCourseId&&courses
+      ?"→ 已同步到课程："+(courses.find(c=>String(c.id)===String(taskPreview.targetCourseId))?.title||"")
+      :"";
+    const taskList=toAdd.map((t,i)=>{
+      const subs=(t.subtasks||[]).length?"\n"+t.subtasks.map(s=>"    • "+s).join("\n"):"";
+      const est=t.estimate?" ("+Math.round(t.estimate/60*10)/10+"h)":"";
+      return(i+1)+". "+t.title+est+subs;
+    }).join("\n");
+    const record="✅ 已加入专注板（"+toAdd.length+"项）"+
+      (courseNote?"\n"+courseNote:"")+
+      "\n\n"+taskList;
+    setMsgs(m=>[...m,{role:"ai",text:record,images:[]}]);
   }
 
   // 把一批学习任务同步到课程的章节列表
@@ -1496,21 +1508,65 @@ function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,on
     if(!apiKey){setShowKey(true);return;}
     const msg=(text||"").trim();
     setInput("");setPendingImgs([]);
+    // 先把用户消息加到界面
     setMsgs(m=>[...m,{role:"user",text:msg,images:imgs.map(p=>p.preview)}]);
     setLoading(true);
-    const ctx=tasks.filter(t=>!t.done).map(t=>"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）").join("\n");
-    const sys="你是一个思考深入的学习规划师和效率助手。\n\n"+
-    "用户当前任务：\n"+ctx+"\n\n"+
-    "回答原则：\n"+
-    "- 真正分析内容，不要逐条复述原文\n"+
-    "- 做学习规划时：按天/阶段组织，说明每天的学习重点和逻辑，而不是罗列所有子标题\n"+
-    "- 任务拆解时：以天或阶段为单位，把具体内容作为子步骤，不要每个小点都变成独立任务\n"+
-    "- 给出真实的判断和建议，比如哪些章节更重要、哪些可以快速过\n"+
-    "- 直接回答，不用开场白";
-    const parts=[{text:sys+"\n\n用户："+msg}];
-    imgs.forEach(p=>parts.push({inline_data:{mime_type:p.type,data:p.data}}));
+
+    const ctx=tasks.filter(t=>!t.done).slice(0,20).map(t=>"- "+t.title+"（"+getProj(t.project).name+"，"+t.priority+"）").join("\n");
+    const sysText="你是一个思考深入的学习规划师和效率助手。\n\n"+
+      "用户当前任务（仅供参考）：\n"+ctx+"\n\n"+
+      "回答原则：\n"+
+      "- 真正分析内容，不要逐条复述原文\n"+
+      "- 做学习规划时：按天/阶段组织，说明每天的学习重点和逻辑\n"+
+      "- 任务拆解时：以天或阶段为单位，把具体内容作为子步骤\n"+
+      "- 给出真实的判断和建议\n"+
+      "- 直接回答，不用开场白";
+
+    // ── 构建多轮上下文 ──
+    // 取当前对话的历史消息（最多 20 条，避免 token 过多）
+    const histMsgs=(activeConv?.msgs||[]).slice(-20);
+    const contents=[];
+
+    // 第一条作为带 system prompt 的 user 消息
+    let firstUserDone=false;
+    for(const m of histMsgs){
+      if(m.role==="ai"||m.role==="model"){
+        contents.push({role:"model",parts:[{text:m.text||""}]});
+      } else {
+        // user 消息
+        const parts=[];
+        if(!firstUserDone){
+          // 第一条 user 消息带 system prompt
+          parts.push({text:sysText+"\n\n"+m.text});
+          firstUserDone=true;
+        } else {
+          parts.push({text:m.text||""});
+        }
+        // 恢复该消息的图片（base64 preview）
+        (m.images||[]).forEach(img=>{
+          if(img&&img.startsWith("data:")){
+            const mime=img.split(";")[0].split(":")[1]||"image/jpeg";
+            const data=img.split(",")[1]||"";
+            if(data)parts.push({inline_data:{mime_type:mime,data}});
+          }
+        });
+        contents.push({role:"user",parts});
+      }
+    }
+
+    // 当前这条新消息（还未存入 activeConv，手动加）
+    const newParts=[];
+    if(!firstUserDone){
+      newParts.push({text:sysText+"\n\n"+msg});
+    } else {
+      newParts.push({text:msg});
+    }
+    // 带上当前新上传的图片
+    imgs.forEach(p=>newParts.push({inline_data:{mime_type:p.type,data:p.data}}));
+    contents.push({role:"user",parts:newParts});
+
     try{
-      const reply=await callGemini(apiKey,[{parts}]);
+      const reply=await callGemini(apiKey,contents);
       setMsgs(m=>[...m,{role:"ai",text:reply,images:[]}]);
       if(btid){
         const steps=reply.split("\n").filter(l=>l.trim().startsWith("•")).map(l=>l.replace(/^•\s*/,"").trim()).filter(Boolean);
@@ -2392,6 +2448,7 @@ function CourseDetail({course,onClose,onUpdate,onAddTaskToBoard,geminiKey,onAddP
   const [newAssignType,setNewAssignType]=useState("normal"); // normal | copy_study | sketch
   const [newAssignTarget,setNewAssignTarget]=useState(10);
   const [showPracticeCheckIn,setShowPracticeCheckIn]=useState(null); // assignment object
+  const [expandedEp,setExpandedEp]=useState(null); // episode id
   const donePct=course.episodes.length?Math.round(course.episodes.filter(e=>e.status==="done").length/course.episodes.length*100):0;
   const nextEp=course.episodes.find(e=>e.status==="todo"||e.status==="doing");
   const daysSinceStudy=daysSince(course.lastStudied);
