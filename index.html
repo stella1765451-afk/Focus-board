@@ -2951,7 +2951,7 @@ function courseAvgMin(c){
 }
 
 // 季度课表：每周节奏 + 容量是否装得下（6-7门并行也能管）
-function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
+function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard,onOpenCourse}){
   const qi=quarterInfo();
   const [budget,setBudget]=useState(()=>lsGet("zj_week_study_budget",10));
   const [editAvg,setEditAvg]=useState(null);
@@ -2988,14 +2988,15 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
       <button onClick={onClose} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>← 返回课程</button>
     </div>
 
-    {/* 视图切换：节奏容量 / 周课表 */}
+    {/* 视图切换：节奏容量 / 周课表 / 月历 */}
     <div style={{display:"flex",gap:0,background:"#f0eee9",borderRadius:9,padding:3,marginBottom:16,width:"fit-content"}}>
-      {[["capacity","📊 节奏容量"],["timetable","🗓 周课表"]].map(([k,l])=>(
-        <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:7,border:"none",cursor:"pointer",fontSize:13,fontWeight:tab===k?600:400,background:tab===k?"#fff":"transparent",color:tab===k?"#1a1a1a":"#888",boxShadow:tab===k?"0 1px 3px rgba(0,0,0,.08)":"none"}}>{l}</button>
+      {[["capacity","📊 节奏容量"],["timetable","🗓 周课表"],["month","📅 月历"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 14px",borderRadius:7,border:"none",cursor:"pointer",fontSize:13,fontWeight:tab===k?600:400,background:tab===k?"#fff":"transparent",color:tab===k?"#1a1a1a":"#888",boxShadow:tab===k?"0 1px 3px rgba(0,0,0,.08)":"none"}}>{l}</button>
       ))}
     </div>
 
-    {tab==="timetable"?<WeekTimetable courses={list} onUpdate={onUpdate}/>:<>
+    {tab==="timetable"?<WeekTimetable courses={list} onUpdate={onUpdate} onOpenCourse={onOpenCourse} onAddTaskToBoard={onAddTaskToBoard}/>:
+     tab==="month"?<MonthTimetable courses={list} onOpenCourse={onOpenCourse}/>:<>
     {/* 容量表：这季每周排了多少、装不装得下 */}
     <div style={{background:over?"#FCEBEB":"#EAF6EF",border:`1.5px solid ${over?"#e8b4b4":"#bfe3cd"}`,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -3066,24 +3067,27 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
 const WEEK_DAYS=["周一","周二","周三","周四","周五","周六","周日"];
 function parseHM(s){const m=/^(\d{1,2}):(\d{2})$/.exec(s||"");if(!m)return null;return (+m[1])*60+(+m[2]);}
 function fmtHM(min){const h=Math.floor(min/60),m=min%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}
-function WeekTimetable({courses,onUpdate}){
+function todayWeekIdx(){return (new Date().getDay()+6)%7;} // 周一=0 … 周日=6
+function WeekTimetable({courses,onUpdate,onOpenCourse,onAddTaskToBoard}){
   const list=courses.filter(c=>!c.archived);
   const [form,setForm]=useState(()=>({courseId:list[0]?.id||0,day:0,start:"09:00",dur:90}));
+  const [pushed,setPushed]=useState(false);
+  const tIdx=todayWeekIdx();
   // 收集所有时段
   const allSlots=[];
   list.forEach(c=>(c.slots||[]).forEach(s=>{const st=parseHM(s.start);if(st!=null)allSlots.push({...s,courseId:c.id,color:c.color,title:c.title,st,en:st+(s.dur||60)});}));
+  const todaySlots=allSlots.filter(s=>s.day===tIdx).sort((a,b)=>a.st-b.st);
   // 可见时间范围（按已有时段动态收缩，默认 8:00–22:00）
   let minH=8,maxH=22;
   if(allSlots.length){
     minH=Math.min(8,Math.floor(Math.min(...allSlots.map(s=>s.st))/60));
     maxH=Math.max(22,Math.ceil(Math.max(...allSlots.map(s=>s.en))/60));
   }
-  const PXH=46; // 每小时像素
+  const PXH=46;
   const totalH=maxH-minH;
   function addSlot(){
-    const c=list.find(x=>x.id===form.courseId);
-    if(!c){return;}
-    if(parseHM(form.start)==null){return;}
+    const c=list.find(x=>x.id===form.courseId);if(!c)return;
+    if(parseHM(form.start)==null)return;
     const slot={id:Date.now(),day:+form.day,start:form.start,dur:Math.max(15,+form.dur||60)};
     onUpdate({...c,slots:[...(c.slots||[]),slot]});
   }
@@ -3091,12 +3095,22 @@ function WeekTimetable({courses,onUpdate}){
     const c=list.find(x=>x.id===courseId);if(!c)return;
     onUpdate({...c,slots:(c.slots||[]).filter(s=>s.id!==slotId)});
   }
+  function pushTodayToBoard(){
+    if(!onAddTaskToBoard||!todaySlots.length)return;
+    todaySlots.forEach(s=>onAddTaskToBoard({
+      title:s.title||"上课",project:2,priority:"today",due:todayStr(),
+      estimate:String(s.dur||60),
+      notes:`🗓 ${WEEK_DAYS[s.day]} ${fmtHM(s.st)}–${fmtHM(s.en)} 课表时段`,
+      ...(s.courseId?{courseId:s.courseId}:{}),
+    }));
+    setPushed(true);
+  }
   const hours=Array.from({length:totalH},(_,i)=>minH+i);
   return<div>
-    <div style={{fontSize:12.5,color:"#888",marginBottom:12,lineHeight:1.5}}>把每门课固定排进一周里，像大学课表一样看到自己什么时候上什么。{list.length===0&&" 先去课程页加课程。"}</div>
+    <div style={{fontSize:12.5,color:"#888",marginBottom:12,lineHeight:1.5}}>把每门课固定排进一周里，像大学课表一样看到什么时候上什么。点课程块可跳到那门课。{list.length===0&&" 先去课程页加课程。"}</div>
 
     {/* 添加时段 */}
-    {list.length>0&&<div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8,background:"#f7f6f3",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+    {list.length>0&&<div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8,background:"#f7f6f3",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
       <select value={form.courseId} onChange={e=>setForm({...form,courseId:+e.target.value})} style={{padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,maxWidth:150}}>
         {list.map(c=><option key={c.id} value={c.id}>{c.title||"未命名"}</option>)}
       </select>
@@ -3110,33 +3124,34 @@ function WeekTimetable({courses,onUpdate}){
       <button onClick={addSlot} style={{padding:"6px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>+ 排进课表</button>
     </div>}
 
+    {/* 一键把今天的课变成任务 */}
+    {todaySlots.length>0&&onAddTaskToBoard&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#EAF2FB",border:"0.5px solid #cfe0f3",borderRadius:9,padding:"9px 12px",marginBottom:14}}>
+      <span style={{fontSize:12.5,color:"#185FA5"}}>今天（{WEEK_DAYS[tIdx]}）排了 {todaySlots.length} 节课</span>
+      {pushed?<span style={{fontSize:12,color:"#0F6E56"}}>✓ 已加进任务板</span>
+        :<button onClick={pushTodayToBoard} style={{padding:"5px 12px",background:"#185FA5",color:"#fff",border:"none",borderRadius:7,fontSize:12.5,cursor:"pointer"}}>▶ 把今天的课排进任务板</button>}
+    </div>}
+
     {/* 网格 */}
     <div style={{overflowX:"auto",border:"0.5px solid #e0ddd6",borderRadius:10,background:"#fff"}}>
       <div style={{minWidth:560}}>
-        {/* 表头 */}
         <div style={{display:"grid",gridTemplateColumns:"44px repeat(7,1fr)",borderBottom:"0.5px solid #eee"}}>
           <div/>
-          {WEEK_DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:12,fontWeight:600,color:"#666",padding:"8px 0",borderLeft:"0.5px solid #f2f0eb"}}>{d}</div>)}
+          {WEEK_DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:12,fontWeight:i===tIdx?700:600,color:i===tIdx?"#185FA5":"#666",padding:"8px 0",borderLeft:"0.5px solid #f2f0eb",background:i===tIdx?"#F4F9FE":"transparent"}}>{d}{i===tIdx?" ·今":""}</div>)}
         </div>
-        {/* 时间网格 + 课程块 */}
         <div style={{display:"grid",gridTemplateColumns:"44px repeat(7,1fr)"}}>
-          {/* 小时标签列 */}
           <div style={{position:"relative",height:totalH*PXH}}>
             {hours.map(h=><div key={h} style={{position:"absolute",top:(h-minH)*PXH-6,right:6,fontSize:10,color:"#bbb"}}>{h}:00</div>)}
           </div>
-          {/* 7 天列 */}
           {WEEK_DAYS.map((_,di)=>(
-            <div key={di} style={{position:"relative",height:totalH*PXH,borderLeft:"0.5px solid #f2f0eb"}}>
-              {/* 小时分隔线 */}
+            <div key={di} style={{position:"relative",height:totalH*PXH,borderLeft:"0.5px solid #f2f0eb",background:di===tIdx?"rgba(24,95,165,.03)":"transparent"}}>
               {hours.map((h,hi)=>hi>0&&<div key={h} style={{position:"absolute",top:hi*PXH,left:0,right:0,borderTop:"0.5px solid #f5f3ee"}}/>)}
-              {/* 课程块 */}
               {allSlots.filter(s=>s.day===di).map(s=>{
                 const top=(s.st-minH*60)/60*PXH;
                 const height=Math.max(20,(s.dur||60)/60*PXH-2);
-                return<div key={s.id} style={{position:"absolute",top,left:2,right:2,height,background:s.color,borderRadius:6,padding:"3px 5px",color:"#fff",fontSize:10.5,overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,.12)"}}>
+                return<div key={s.id} onClick={()=>onOpenCourse&&onOpenCourse(s.courseId)} title={'点击打开这门课'} style={{position:"absolute",top,left:2,right:2,height,background:s.color,borderRadius:6,padding:"3px 5px",color:"#fff",fontSize:10.5,overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,.12)",cursor:onOpenCourse?"pointer":"default"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:2}}>
                     <span style={{fontWeight:600,lineHeight:1.2,flex:1,overflow:"hidden",textOverflow:"ellipsis"}}>{s.title||"课程"}</span>
-                    <button onClick={()=>delSlot(s.courseId,s.id)} style={{background:"rgba(255,255,255,.25)",border:"none",color:"#fff",borderRadius:3,cursor:"pointer",fontSize:10,lineHeight:1,padding:"1px 3px",flexShrink:0}}>✕</button>
+                    <button onClick={e=>{e.stopPropagation();delSlot(s.courseId,s.id);}} style={{background:"rgba(255,255,255,.25)",border:"none",color:"#fff",borderRadius:3,cursor:"pointer",fontSize:10,lineHeight:1,padding:"1px 3px",flexShrink:0}}>✕</button>
                   </div>
                   {height>32&&<div style={{opacity:.85,fontSize:9.5,marginTop:1}}>{fmtHM(s.st)}–{fmtHM(s.en)}</div>}
                 </div>;
@@ -3147,6 +3162,68 @@ function WeekTimetable({courses,onUpdate}){
       </div>
     </div>
     {allSlots.length===0&&list.length>0&&<div style={{fontSize:12,color:"#bbb",textAlign:"center",marginTop:12}}>还没排课。上面选课程、星期、时间，点「排进课表」试试。</div>}
+  </div>;
+}
+
+// 月历课表：一个月一眼看到每天排了哪些课（按周几循环）
+function MonthTimetable({courses,onOpenCourse}){
+  const list=courses.filter(c=>!c.archived);
+  const [off,setOff]=useState(0);
+  const base=new Date();
+  const view=new Date(base.getFullYear(),base.getMonth()+off,1);
+  const y=view.getFullYear(),mo=view.getMonth();
+  const daysIn=new Date(y,mo+1,0).getDate();
+  const firstWd=(new Date(y,mo,1).getDay()+6)%7; // 周一=0
+  const today=new Date();const isThisMonth=today.getFullYear()===y&&today.getMonth()===mo;
+  // 按周几归类时段
+  const byDay={};
+  list.forEach(c=>(c.slots||[]).forEach(s=>{const st=parseHM(s.start);if(st==null)return;(byDay[s.day]=byDay[s.day]||[]).push({courseId:c.id,color:c.color,title:c.title,st,start:s.start,dur:s.dur});}));
+  Object.keys(byDay).forEach(k=>byDay[k].sort((a,b)=>a.st-b.st));
+  const cells=[];
+  for(let i=0;i<firstWd;i++)cells.push(null);
+  for(let d=1;d<=daysIn;d++)cells.push(d);
+  while(cells.length%7!==0)cells.push(null);
+  const MN=["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+  return<div>
+    {/* 月份导航 */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"linear-gradient(135deg,#A8DAFF33,#D4B8FF33)",borderRadius:12,padding:"12px 16px",marginBottom:12}}>
+      <button onClick={()=>setOff(off-1)} style={{width:30,height:30,borderRadius:8,border:"none",background:"#fff",cursor:"pointer",fontSize:15,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}}>‹</button>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:16,fontWeight:700,color:"#1a1a1a"}}>{y} 年 {MN[mo]}</div>
+        {off!==0&&<button onClick={()=>setOff(0)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",marginTop:2}}>回到本月</button>}
+      </div>
+      <button onClick={()=>setOff(off+1)} style={{width:30,height:30,borderRadius:8,border:"none",background:"#fff",cursor:"pointer",fontSize:15,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}}>›</button>
+    </div>
+    {list.length===0&&<div style={{background:"#fff",border:"0.5px dashed #e0ddd6",borderRadius:12,padding:"28px",textAlign:"center",color:"#aaa",fontSize:14}}>还没有课程，先去课程页添加，再到「周课表」排时段</div>}
+    {list.length>0&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,overflow:"hidden"}}>
+      {/* 周几表头 */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",borderBottom:"0.5px solid #f0ede8"}}>
+        {WEEK_DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:11,fontWeight:600,color:i>=5?"#bba":"#888",padding:"8px 0"}}>{d.replace("周","")}</div>)}
+      </div>
+      {/* 日期网格 */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+        {cells.map((d,i)=>{
+          if(d===null)return<div key={i} style={{minHeight:78,borderRight:(i%7!==6)?"0.5px solid #f5f3ee":"none",borderBottom:"0.5px solid #f5f3ee",background:"#fbfaf8"}}/>;
+          const wd=(new Date(y,mo,d).getDay()+6)%7;
+          const slots=byDay[wd]||[];
+          const isToday=isThisMonth&&today.getDate()===d;
+          const show=slots.slice(0,3);const extra=slots.length-show.length;
+          return<div key={i} style={{minHeight:78,padding:"4px 5px",borderRight:(i%7!==6)?"0.5px solid #f5f3ee":"none",borderBottom:"0.5px solid #f5f3ee",background:wd>=5?"#fcfbf9":"#fff"}}>
+            <div style={{textAlign:"right",marginBottom:3}}>
+              <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:20,height:20,borderRadius:"50%",fontSize:11,fontWeight:isToday?700:500,color:isToday?"#fff":"#888",background:isToday?"#185FA5":"transparent",padding:isToday?"0 5px":0}}>{d}</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:2}}>
+              {show.map((s,j)=><div key={j} onClick={()=>onOpenCourse&&onOpenCourse(s.courseId)} title={`${s.title||"课程"} ${s.start}`} style={{display:"flex",alignItems:"center",gap:3,fontSize:9.5,color:"#444",background:s.color+"22",borderLeft:`2px solid ${s.color}`,borderRadius:3,padding:"1px 4px",cursor:onOpenCourse?"pointer":"default",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+                <span style={{flexShrink:0,color:s.color,fontWeight:600}}>{s.start}</span>
+                <span style={{overflow:"hidden",textOverflow:"ellipsis"}}>{s.title||"课程"}</span>
+              </div>)}
+              {extra>0&&<div style={{fontSize:9,color:"#bbb",paddingLeft:2}}>+{extra}</div>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>}
+    {list.length>0&&Object.keys(byDay).length===0&&<div style={{fontSize:12,color:"#bbb",textAlign:"center",marginTop:12}}>这些课还没排时段。去「周课表」给它们排上课时间，这里就会按周几铺满整月。</div>}
   </div>;
 }
 // ══════════════════════════════════════════
@@ -3178,7 +3255,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
     const course=courses.find(c=>c.id===detail);
     if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey} onAddPomEntry={onAddPomEntry} tasks={tasks} onToggleSub={onToggleSub}/>;
   }
-  if(showPlanner)return<QuarterPlanner courses={courses} onUpdate={onUpdate} onClose={()=>setShowPlanner(false)} onAddTaskToBoard={onAddTaskToBoard}/>;
+  if(showPlanner)return<QuarterPlanner courses={courses} onUpdate={onUpdate} onClose={()=>setShowPlanner(false)} onAddTaskToBoard={onAddTaskToBoard} onOpenCourse={id=>{setShowPlanner(false);setDetail(id);}}/>;
 
   return<div>
     <LearningHeatmap courses={courses}/>
