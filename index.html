@@ -259,7 +259,7 @@ const BLANK_COURSE={
   totalEpisodes:0,episodes:[],
   notes:[],assignments:[],
   active:true,archived:false,
-  weeklyTarget:0,
+  weeklyTarget:0,avgMinOverride:0,slots:[],
   lastStudied:todayStr(),createdAt:"",
   color:"#185FA5",
 };
@@ -724,60 +724,125 @@ function MigrationPanel({tasks,onMigrate,onClose}){
 /* ═══════════════════════════════════════════
    BRAIN DUMP MODAL
 ═══════════════════════════════════════════ */
-function BrainDump({onClose,onAddTasks,apiKey}){
+function BrainDump({onClose,onAddTasks,apiKey,courses=[],onAddIdeas}){
   const [text,setText]=useState("");
   const [result,setResult]=useState(null);
   const [loading,setLoading]=useState(false);
+  const [sel,setSel]=useState({});
+  const [ideasSaved,setIdeasSaved]=useState(false);
+  const courseList=courses.filter(c=>!c.archived);
   async function analyze(){
     if(!text.trim())return;
     if(!apiKey){setResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
     setLoading(true);
     try{
+      const prompt=`用户脑子很乱，把下面倒出来的内容整理成"能直接上手做"的 JSON。只返回 JSON，不要任何解释或 markdown 代码块。
+格式：
+{
+ "tasks":[{"title":"动词开头、具体到能直接动手的任务名","estimate":数字(预计分钟,宁可往多估),"priority":"today"或"normal","firstStep":"2分钟内就能开始的最小第一步"}],
+ "worries":["纯担忧/情绪，不是任务的"],
+ "ideas":["以后也许想做、但现在不用做的想法"]
+}
+要求：
+- title 必须具体、动词开头、能直接动手（反例"搞定项目"；正例"列出项目要交的3个文件"）。
+- 真正今天必须做的才设 today，其余 normal。
+- firstStep 要小到2分钟能开始（反例"开始写报告"；正例"新建文档、写下标题"）。
+- 只把真正"需要行动的"放进 tasks；纯焦虑放 worries，灵感放 ideas，不要硬塞成任务。
+
+用户内容：
+${text}`;
       const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({contents:[{parts:[{text:`用户现在脑子很乱，把以下内容分类整理成JSON。分为：tasks（需要做的事，数组，每项有title字符串）、worries（担忧/焦虑，数组字符串）、ideas（想法/灵感，数组字符串）。只返回JSON，不要其他文字。\n\n用户内容：${text}`}]}]}),
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}]}),
       });
       const data=await res.json();
       const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||"{}";
       const clean=raw.replace(/```json|```/g,"").trim();
-      setResult(JSON.parse(clean));
+      const parsed=JSON.parse(clean);
+      const tasks=(parsed.tasks||[]).map(t=>({
+        title:(t.title||"").trim(),
+        estimate:parseInt(t.estimate)>0?parseInt(t.estimate):30,
+        priority:t.priority==="today"?"today":"normal",
+        firstStep:(t.firstStep||"").trim(),
+      })).filter(t=>t.title);
+      setResult({tasks,worries:parsed.worries||[],ideas:parsed.ideas||[]});
+      setSel(Object.fromEntries(tasks.map((_,i)=>[i,true])));
     }catch(e){setResult({error:"分析失败，请重试"});}
     setLoading(false);
   }
+  const tasks=result&&!result.error?result.tasks:[];
+  const chosen=tasks.filter((_,i)=>sel[i]);
+  const toggle=i=>setSel(s=>({...s,[i]:!s[i]}));
+  const setField=(i,k,v)=>setResult(r=>({...r,tasks:r.tasks.map((t,j)=>j===i?{...t,[k]:v}:t)}));
   return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:520,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
+    <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:540,maxHeight:"86vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
       <div style={{padding:"20px 24px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
         <div style={{fontSize:16,fontWeight:600,marginBottom:4}}>🧠 脑倾倒</div>
-        <div style={{fontSize:13,color:"#888"}}>把脑子里所有东西都倒出来，不用整理，AI帮你分类</div>
+        <div style={{fontSize:13,color:"#888"}}>{result&&!result.error?"勾选你真的要做的，每件都带估时和第一步；改两下就能上手":"把脑子里所有东西都倒出来，AI 帮你拆成能动手的小事"}</div>
       </div>
-      <div style={{padding:"16px 24px"}}>
+      <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
         {!result&&<>
           <textarea value={text} onChange={e=>setText(e.target.value)} placeholder={"想到什么写什么，比如：\n- 明天要交报告好像\n- 一直担心那个项目\n- 想学摄影\n- 好像忘了回某人消息\n..."} rows={7} style={{width:"100%",padding:"10px 12px",border:"0.5px solid #ccc",borderRadius:8,fontSize:14,lineHeight:1.7,marginBottom:12}}/>
           <button onClick={analyze} disabled={loading} style={{width:"100%",padding:"10px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:8,fontSize:14,cursor:"pointer",opacity:loading?.7:1}}>
-            {loading?"分析中…":"🪄 AI帮我整理"}
+            {loading?"分析中…":"🪄 AI帮我拆成能做的事"}
           </button>
         </>}
-        {result&&!result.error&&<div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {result.tasks?.length>0&&<div>
-            <div style={{fontSize:12,color:"#185FA5",fontWeight:600,marginBottom:6}}>✅ 需要做的事 ({result.tasks.length})</div>
-            {result.tasks.map((t,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:"#EBF3FB",borderRadius:6,marginBottom:3,fontSize:13}}><span style={{color:"#185FA5"}}>•</span>{t.title}</div>)}
+        {result&&!result.error&&<div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {tasks.length>0&&<div>
+            <div style={{fontSize:12,color:"#185FA5",fontWeight:600,marginBottom:8}}>✅ 能动手的事（{chosen.length}/{tasks.length} 已选）</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {tasks.map((t,i)=>{
+                const on=!!sel[i];
+                return<div key={i} style={{border:`1px solid ${on?"#bcd6ef":"#eee"}`,background:on?"#F4F9FE":"#fafafa",borderRadius:9,padding:"10px 12px",opacity:on?1:.55}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:9}}>
+                    <button onClick={()=>toggle(i)} style={{flexShrink:0,marginTop:1,width:18,height:18,borderRadius:5,border:`1.5px solid ${on?"#185FA5":"#ccc"}`,background:on?"#185FA5":"#fff",color:"#fff",fontSize:12,cursor:"pointer",lineHeight:"15px"}}>{on?"✓":""}</button>
+                    <input value={t.title} onChange={e=>setField(i,"title",e.target.value)} style={{flex:1,fontSize:13.5,fontWeight:500,border:"none",background:"transparent",outline:"none",padding:0,color:"#1a1a1a"}}/>
+                  </div>
+                  {on&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:8,paddingLeft:27}}>
+                    <button onClick={()=>setField(i,"priority",t.priority==="today"?"normal":"today")} style={{fontSize:11,padding:"2px 9px",borderRadius:20,border:"1px solid "+(t.priority==="today"?"#A32D2D":"#ccc"),background:t.priority==="today"?"#A32D2D":"#fff",color:t.priority==="today"?"#fff":"#888",cursor:"pointer"}}>{t.priority==="today"?"今天":"普通"}</button>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:11,color:"#888"}}>估时
+                      <input type="number" value={t.estimate} onChange={e=>setField(i,"estimate",parseInt(e.target.value)||0)} style={{width:46,fontSize:11,padding:"2px 4px",border:"0.5px solid #ccc",borderRadius:4,outline:"none"}}/>分
+                    </span>
+                  </div>}
+                  {on&&<div style={{display:"flex",alignItems:"center",gap:5,marginTop:6,paddingLeft:27}}>
+                    <span style={{fontSize:11,color:"#0F6E56",flexShrink:0}}>先做</span>
+                    <input value={t.firstStep} onChange={e=>setField(i,"firstStep",e.target.value)} placeholder={'2分钟能开始的第一步'} style={{flex:1,fontSize:11.5,padding:"3px 7px",border:"0.5px solid #cde3d6",background:"#F3FAF6",borderRadius:5,outline:"none",color:"#2a2a2a"}}/>
+                  </div>}
+                  {on&&courseList.length>0&&<div style={{display:"flex",alignItems:"center",gap:5,marginTop:6,paddingLeft:27}}>
+                    <span style={{fontSize:11,color:"#888",flexShrink:0}}>📚 同步到课程</span>
+                    <select value={t.courseId||0} onChange={e=>setField(i,"courseId",+e.target.value||0)} style={{flex:1,fontSize:11.5,padding:"3px 6px",border:"0.5px solid #ccc",borderRadius:5,outline:"none",color:"#444",maxWidth:200}}>
+                      <option value={0}>不绑定</option>
+                      {courseList.map(c=><option key={c.id} value={c.id}>{c.title||"未命名课程"}</option>)}
+                    </select>
+                  </div>}
+                </div>;
+              })}
+            </div>
           </div>}
-          {result.worries?.length>0&&<div>
-            <div style={{fontSize:12,color:"#854F0B",fontWeight:600,marginBottom:6}}>😰 担忧/焦虑 ({result.worries.length})</div>
-            {result.worries.map((w,i)=><div key={i} style={{padding:"6px 8px",background:"#FAEEDA",borderRadius:6,marginBottom:3,fontSize:13}}>{w}</div>)}
+          {(result.worries?.length>0||result.ideas?.length>0)&&<div style={{borderTop:"0.5px dashed #e8e5de",paddingTop:12}}>
+            <div style={{fontSize:11,color:"#aaa",marginBottom:8}}>下面这些只是先记下来，不会加进任务板：</div>
+            {result.worries?.length>0&&<div style={{marginBottom:8}}>
+              <div style={{fontSize:12,color:"#854F0B",fontWeight:600,marginBottom:5}}>😰 担忧/焦虑</div>
+              {result.worries.map((w,i)=><div key={i} style={{padding:"5px 8px",background:"#FAEEDA",borderRadius:6,marginBottom:3,fontSize:12.5,color:"#6b4a14"}}>{w}</div>)}
+            </div>}
+            {result.ideas?.length>0&&<div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                <span style={{fontSize:12,color:"#0F6E56",fontWeight:600}}>💡 想法/灵感</span>
+                {onAddIdeas&&(ideasSaved
+                  ?<span style={{fontSize:11,color:"#0F6E56"}}>✓ 已存入未来清单</span>
+                  :<button onClick={()=>{onAddIdeas(result.ideas);setIdeasSaved(true);}} style={{fontSize:11,color:"#185FA5",background:"none",border:"0.5px solid #185FA5",borderRadius:5,padding:"2px 8px",cursor:"pointer"}}>📥 全部存进未来清单</button>)}
+              </div>
+              {result.ideas.map((d,i)=><div key={i} style={{padding:"5px 8px",background:"#E1F5EE",borderRadius:6,marginBottom:3,fontSize:12.5,color:"#185c48"}}>{d}</div>)}
+            </div>}
           </div>}
-          {result.ideas?.length>0&&<div>
-            <div style={{fontSize:12,color:"#0F6E56",fontWeight:600,marginBottom:6}}>💡 想法/灵感 ({result.ideas.length})</div>
-            {result.ideas.map((d,i)=><div key={i} style={{padding:"6px 8px",background:"#E1F5EE",borderRadius:6,marginBottom:3,fontSize:13}}>{d}</div>)}
-          </div>}
-          {result.error&&<div style={{color:"#A32D2D",fontSize:13}}>{result.error}</div>}
+          {tasks.length===0&&<div style={{fontSize:13,color:"#aaa",textAlign:"center",padding:"12px 0"}}>没拆出需要行动的事——你倒出来的多是担忧或想法，先看看上面记下的就好。</div>}
         </div>}
         {result?.error&&<div style={{color:"#A32D2D",fontSize:13,padding:"8px 0"}}>{result.error}</div>}
       </div>
-      <div style={{padding:"12px 24px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between"}}>
+      <div style={{padding:"12px 24px",borderTop:"0.5px solid #e0ddd6",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <button onClick={onClose} style={{fontSize:13,color:"#888",background:"none",border:"none",cursor:"pointer"}}>关闭</button>
-        {result&&!result.error&&result.tasks?.length>0&&(
-          <button onClick={()=>{onAddTasks(result.tasks.map(t=>t.title));onClose();}} style={{padding:"7px 16px",background:"#185FA5",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>把任务全部加入列表 →</button>
+        {result&&!result.error&&tasks.length>0&&(
+          <button onClick={()=>{onAddTasks(chosen);onClose();}} disabled={chosen.length===0} style={{padding:"7px 16px",background:chosen.length?"#185FA5":"#ccc",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:chosen.length?"pointer":"default"}}>加入选中的 {chosen.length} 件 →</button>
         )}
       </div>
     </div>
@@ -2880,6 +2945,7 @@ function quarterInfo(){
   return{q:Math.floor(qStartMonth/3)+1,year:now.getFullYear(),start,end,totalWeeks,weeksLeft,weekNo};
 }
 function courseAvgMin(c){
+  if(c.avgMinOverride>0)return c.avgMinOverride;
   const ds=(c.episodes||[]).map(e=>parseInt(e.duration)).filter(n=>n>0);
   return ds.length?Math.round(ds.reduce((a,b)=>a+b,0)/ds.length):30;
 }
@@ -2888,20 +2954,11 @@ function courseAvgMin(c){
 function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
   const qi=quarterInfo();
   const [budget,setBudget]=useState(()=>lsGet("zj_week_study_budget",10));
+  const [editAvg,setEditAvg]=useState(null);
+  const [tab,setTab]=useState("capacity");
   const setBud=v=>{const n=Math.max(1,v);setBudget(n);lsSet("zj_week_study_budget",n);};
-  // 每集时长手动覆盖（courseId → 分钟数）
-  const [avgOverride,setAvgOverride]=useState(()=>lsGet("zj_avg_override",{}));
-  const [editingAvg,setEditingAvg]=useState(null); // courseId being edited
-  const [avgInput,setAvgInput]=useState("");
-  function saveAvg(cid){
-    const v=parseInt(avgInput);
-    if(v>0){const next={...avgOverride,[cid]:v};setAvgOverride(next);lsSet("zj_avg_override",next);}
-    setEditingAvg(null);setAvgInput("");
-  }
   const list=courses.filter(c=>!c.archived);
   const setWeekly=(c,v)=>onUpdate({...c,weeklyTarget:Math.max(0,v)});
-  // 获取某课的每集分钟数（手动覆盖优先，否则从章节均值，否则默认30）
-  function getAvg(c){return avgOverride[c.id]||courseAvgMin(c);}
 
   let totalWeeklyMin=0;
   const rows=list.map(c=>{
@@ -2910,7 +2967,7 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
     const totalN=Math.max(c.totalEpisodes||0,eps.length);
     const remaining=Math.max(0,totalN-doneN);
     const wt=c.weeklyTarget||0;
-    const avg=getAvg(c);
+    const avg=courseAvgMin(c);
     const weeklyMin=wt*avg;
     if(wt>0)totalWeeklyMin+=weeklyMin;
     const weeksToFinish=wt>0?Math.ceil(remaining/wt):null;
@@ -2931,6 +2988,14 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
       <button onClick={onClose} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>← 返回课程</button>
     </div>
 
+    {/* 视图切换：节奏容量 / 周课表 */}
+    <div style={{display:"flex",gap:0,background:"#f0eee9",borderRadius:9,padding:3,marginBottom:16,width:"fit-content"}}>
+      {[["capacity","📊 节奏容量"],["timetable","🗓 周课表"]].map(([k,l])=>(
+        <button key={k} onClick={()=>setTab(k)} style={{padding:"6px 16px",borderRadius:7,border:"none",cursor:"pointer",fontSize:13,fontWeight:tab===k?600:400,background:tab===k?"#fff":"transparent",color:tab===k?"#1a1a1a":"#888",boxShadow:tab===k?"0 1px 3px rgba(0,0,0,.08)":"none"}}>{l}</button>
+      ))}
+    </div>
+
+    {tab==="timetable"?<WeekTimetable courses={list} onUpdate={onUpdate}/>:<>
     {/* 容量表：这季每周排了多少、装不装得下 */}
     <div style={{background:over?"#FCEBEB":"#EAF6EF",border:`1.5px solid ${over?"#e8b4b4":"#bfe3cd"}`,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -2970,15 +3035,20 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
             <button onClick={()=>setWeekly(c,wt-1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>−</button>
             <span style={{fontSize:14,fontWeight:600,minWidth:42,textAlign:"center"}}>{wt} 集</span>
             <button onClick={()=>setWeekly(c,wt+1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>+</button>
-            {editingAvg===c.id?(
-              <input autoFocus type="number" value={avgInput} onChange={e=>setAvgInput(e.target.value)}
-                onBlur={()=>saveAvg(c.id)} onKeyDown={e=>{if(e.key==="Enter")saveAvg(c.id);if(e.key==="Escape"){setEditingAvg(null);setAvgInput("");}}}
-                style={{width:52,fontSize:12,border:"0.5px solid #185FA5",borderRadius:4,padding:"2px 5px",outline:"none",textAlign:"center"}} min={1} max={999}/>
-            ):(
-              <span onClick={()=>{setEditingAvg(c.id);setAvgInput(String(avg));}}
-                style={{fontSize:11,color:avgOverride[c.id]?"#185FA5":"#bbb",cursor:"pointer",borderBottom:"1px dashed "+(avgOverride[c.id]?"#185FA5":"#ddd"),paddingBottom:1}}
-                title="点击修改每集时长">~{avg}分/集</span>
-            )}
+            <span style={{display:"inline-flex",alignItems:"center",gap:5,marginLeft:2}}>
+              {editAvg===c.id?(
+                <span style={{display:"inline-flex",alignItems:"center",gap:3}}>
+                  <input type="number" autoFocus defaultValue={avg}
+                    onBlur={e=>{const n=parseInt(e.target.value);onUpdate({...c,avgMinOverride:n>0?n:0});setEditAvg(null);}}
+                    onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                    style={{width:50,fontSize:11,padding:"2px 4px",border:"1px solid #185FA5",borderRadius:4,outline:"none"}}/>
+                  <span style={{fontSize:11,color:"#bbb"}}>分/集</span>
+                </span>
+              ):(
+                <span onClick={()=>setEditAvg(c.id)} title={'点这里手动调整每集估时'} style={{fontSize:11,color:c.avgMinOverride>0?"#185FA5":"#bbb",cursor:"pointer",borderBottom:"1px dashed "+(c.avgMinOverride>0?"#185FA5":"#ccc")}}>~{avg}分/集{c.avgMinOverride>0?" ✎":""}</span>
+              )}
+              {c.avgMinOverride>0&&editAvg!==c.id&&<button onClick={()=>onUpdate({...c,avgMinOverride:0})} title={'恢复按章节时长自动计算'} style={{fontSize:10,color:"#aaa",background:"none",border:"none",cursor:"pointer",padding:0}}>↺自动</button>}
+            </span>
           </div>
           <button onClick={()=>onUpdate({...c,active:!c.active})} style={{fontSize:12,color:c.active?"#854F0B":"#185FA5",background:"none",border:"none",cursor:"pointer"}}>{c.active?"转候补":"设为在学"}</button>
         </div>
@@ -2988,6 +3058,95 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
         </div>
       </div>;
     })}
+    </>}
+  </div>;
+}
+
+// 周课表：大学课表式网格，可手动加/删上课时段
+const WEEK_DAYS=["周一","周二","周三","周四","周五","周六","周日"];
+function parseHM(s){const m=/^(\d{1,2}):(\d{2})$/.exec(s||"");if(!m)return null;return (+m[1])*60+(+m[2]);}
+function fmtHM(min){const h=Math.floor(min/60),m=min%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}
+function WeekTimetable({courses,onUpdate}){
+  const list=courses.filter(c=>!c.archived);
+  const [form,setForm]=useState(()=>({courseId:list[0]?.id||0,day:0,start:"09:00",dur:90}));
+  // 收集所有时段
+  const allSlots=[];
+  list.forEach(c=>(c.slots||[]).forEach(s=>{const st=parseHM(s.start);if(st!=null)allSlots.push({...s,courseId:c.id,color:c.color,title:c.title,st,en:st+(s.dur||60)});}));
+  // 可见时间范围（按已有时段动态收缩，默认 8:00–22:00）
+  let minH=8,maxH=22;
+  if(allSlots.length){
+    minH=Math.min(8,Math.floor(Math.min(...allSlots.map(s=>s.st))/60));
+    maxH=Math.max(22,Math.ceil(Math.max(...allSlots.map(s=>s.en))/60));
+  }
+  const PXH=46; // 每小时像素
+  const totalH=maxH-minH;
+  function addSlot(){
+    const c=list.find(x=>x.id===form.courseId);
+    if(!c){return;}
+    if(parseHM(form.start)==null){return;}
+    const slot={id:Date.now(),day:+form.day,start:form.start,dur:Math.max(15,+form.dur||60)};
+    onUpdate({...c,slots:[...(c.slots||[]),slot]});
+  }
+  function delSlot(courseId,slotId){
+    const c=list.find(x=>x.id===courseId);if(!c)return;
+    onUpdate({...c,slots:(c.slots||[]).filter(s=>s.id!==slotId)});
+  }
+  const hours=Array.from({length:totalH},(_,i)=>minH+i);
+  return<div>
+    <div style={{fontSize:12.5,color:"#888",marginBottom:12,lineHeight:1.5}}>把每门课固定排进一周里，像大学课表一样看到自己什么时候上什么。{list.length===0&&" 先去课程页加课程。"}</div>
+
+    {/* 添加时段 */}
+    {list.length>0&&<div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:8,background:"#f7f6f3",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+      <select value={form.courseId} onChange={e=>setForm({...form,courseId:+e.target.value})} style={{padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,maxWidth:150}}>
+        {list.map(c=><option key={c.id} value={c.id}>{c.title||"未命名"}</option>)}
+      </select>
+      <select value={form.day} onChange={e=>setForm({...form,day:+e.target.value})} style={{padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
+        {WEEK_DAYS.map((d,i)=><option key={i} value={i}>{d}</option>)}
+      </select>
+      <input type="time" value={form.start} onChange={e=>setForm({...form,start:e.target.value})} style={{padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+      <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:12,color:"#888"}}>时长
+        <input type="number" value={form.dur} onChange={e=>setForm({...form,dur:e.target.value})} style={{width:56,padding:"6px 6px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>分
+      </span>
+      <button onClick={addSlot} style={{padding:"6px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer"}}>+ 排进课表</button>
+    </div>}
+
+    {/* 网格 */}
+    <div style={{overflowX:"auto",border:"0.5px solid #e0ddd6",borderRadius:10,background:"#fff"}}>
+      <div style={{minWidth:560}}>
+        {/* 表头 */}
+        <div style={{display:"grid",gridTemplateColumns:"44px repeat(7,1fr)",borderBottom:"0.5px solid #eee"}}>
+          <div/>
+          {WEEK_DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:12,fontWeight:600,color:"#666",padding:"8px 0",borderLeft:"0.5px solid #f2f0eb"}}>{d}</div>)}
+        </div>
+        {/* 时间网格 + 课程块 */}
+        <div style={{display:"grid",gridTemplateColumns:"44px repeat(7,1fr)"}}>
+          {/* 小时标签列 */}
+          <div style={{position:"relative",height:totalH*PXH}}>
+            {hours.map(h=><div key={h} style={{position:"absolute",top:(h-minH)*PXH-6,right:6,fontSize:10,color:"#bbb"}}>{h}:00</div>)}
+          </div>
+          {/* 7 天列 */}
+          {WEEK_DAYS.map((_,di)=>(
+            <div key={di} style={{position:"relative",height:totalH*PXH,borderLeft:"0.5px solid #f2f0eb"}}>
+              {/* 小时分隔线 */}
+              {hours.map((h,hi)=>hi>0&&<div key={h} style={{position:"absolute",top:hi*PXH,left:0,right:0,borderTop:"0.5px solid #f5f3ee"}}/>)}
+              {/* 课程块 */}
+              {allSlots.filter(s=>s.day===di).map(s=>{
+                const top=(s.st-minH*60)/60*PXH;
+                const height=Math.max(20,(s.dur||60)/60*PXH-2);
+                return<div key={s.id} style={{position:"absolute",top,left:2,right:2,height,background:s.color,borderRadius:6,padding:"3px 5px",color:"#fff",fontSize:10.5,overflow:"hidden",boxShadow:"0 1px 2px rgba(0,0,0,.12)"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:2}}>
+                    <span style={{fontWeight:600,lineHeight:1.2,flex:1,overflow:"hidden",textOverflow:"ellipsis"}}>{s.title||"课程"}</span>
+                    <button onClick={()=>delSlot(s.courseId,s.id)} style={{background:"rgba(255,255,255,.25)",border:"none",color:"#fff",borderRadius:3,cursor:"pointer",fontSize:10,lineHeight:1,padding:"1px 3px",flexShrink:0}}>✕</button>
+                  </div>
+                  {height>32&&<div style={{opacity:.85,fontSize:9.5,marginTop:1}}>{fmtHM(s.st)}–{fmtHM(s.en)}</div>}
+                </div>;
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    {allSlots.length===0&&list.length>0&&<div style={{fontSize:12,color:"#bbb",textAlign:"center",marginTop:12}}>还没排课。上面选课程、星期、时间，点「排进课表」试试。</div>}
   </div>;
 }
 // ══════════════════════════════════════════
@@ -3155,16 +3314,9 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
     if(!geminiKey){setDumpResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
     setDumpLoading(true);
     try{
-      const prompt="你是ADHD效率教练。用户把脑子里的事倒出来了，请替他拆成能直接动手的具体任务。\n"
-        +"只返回JSON，不要任何其他文字：\n"
-        +'{"today":[{"title":"一个动词开头、说清楚做什么+在哪做+做多久的具体行动（如：打开Figma，画登录页面线框图，30分钟）","priority":"urgent|today|normal","estimate":"预计分钟数字符串"}],"thisweek":[{"title":"这周内要做的具体一步"}],"someday":["模糊的愿望/想法/以后再说"]}\n'
-        +"规则：\n"
-        +"1. today 只放今天真的要做的，最多3件，每件必须是一个人坐下来就能开始的具体动作\n"
-        +"2. 禁止出现'研究''了解''思考''规划'这类模糊动词——改成'打开X，做Y，Z分钟'\n"
-        +"3. 估时往多估（用户总低估），宁可高估也不要低估\n"
-        +"4. 模糊的愿望（如'想学画画''要健身'）一律放进 someday，不要强行放进 today\n"
-        +"5. 如果用户原文已经有具体任务，保持原意，只在动词上补具体\n\n"
-        +"用户原文：\n"+dumpText;
+      const prompt="用户脑子里有一团模糊的事，下面是他倒出来的原文。请替他理清，并按时间紧迫度分成三档。只返回JSON，不要任何其他文字：\n"
+        +'{"today":[{"title":"具体到能动手的一句话","priority":"urgent|today|normal","estimate":"预计分钟数字符串"}],"thisweek":[{"title":"..."}],"someday":["想法/以后再说的事字符串"]}\n'
+        +"规则：today 只放今天真的必须做的，最多3件；估时往多了估，因为用户总低估；把模糊的愿望（如'想学X'）放进 someday。\n\n用户原文：\n"+dumpText;
       const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
@@ -5177,7 +5329,44 @@ function App(){
   }
   function addQuick(){if(!quick.trim())return;addTask({title:quick.trim(),project:1,due:"",priority:"normal"});setQuick("");}
   function addModal(){if(!nTask.title.trim())return;addTask(nTask);setShowAdd(false);setNTask({title:"",project:1,due:todayStr(),startDate:"",priority:"today"});}
-  function addBrainTasks(titles){titles.forEach(title=>addTask({title,project:1,due:"",priority:"normal"}));}
+  function addBrainTasks(items){
+    // 先给要同步到课程的任务，在对应课程里建好 episode（taskTitle 做临时索引，addTask 会补 taskId）
+    const byCourse={};
+    items.forEach(it=>{if(it&&typeof it==="object"&&it.courseId)(byCourse[it.courseId]=byCourse[it.courseId]||[]).push(it);});
+    if(Object.keys(byCourse).length){
+      setCourses(cs=>{
+        const next=cs.map(c=>{
+          const lst=byCourse[c.id];if(!lst)return c;
+          const newEps=lst.map((it,i)=>({...BLANK_EPISODE,id:Date.now()+i,title:it.title,status:"todo",duration:it.estimate?String(it.estimate):"",taskTitle:it.title,pushedToBoard:true}));
+          return{...c,episodes:[...(c.episodes||[]),...newEps]};
+        });
+        lsSet("zj_courses",next);triggerSave(undefined,undefined,undefined,undefined,next);
+        return next;
+      });
+    }
+    items.forEach(it=>{
+      if(typeof it==="string"){addTask({title:it,project:1,due:"",priority:"normal"});return;}
+      const fs=(it.firstStep||"").trim();
+      addTask({
+        title:it.title,project:it.courseId?2:1,
+        due:it.priority==="today"?todayStr():"",
+        priority:it.priority||"normal",
+        estimate:it.estimate?String(it.estimate):"",
+        notes:fs?("▶ 先做最小一步："+fs):"",
+        subtasks:fs?[fs]:[],
+        subtaskDone:fs?[false]:[],
+        ...(it.courseId?{courseId:it.courseId}:{}),
+      });
+    });
+  }
+  function addBrainIdeas(ideas){
+    if(!ideas||!ideas.length)return;
+    const d=new Date();const nd=new Date(d.getFullYear(),d.getMonth()+1,1);
+    const mk=monthKey(nd.getFullYear(),nd.getMonth());
+    const fl=futureLogRef.current||{};
+    const add=ideas.map((x,i)=>({id:Date.now()+i,text:typeof x==="string"?x:(x.text||x.title||"")})).filter(o=>o.text);
+    setFutureLogAndSync({...fl,[mk]:[...(fl[mk]||[]),...add]});
+  }
   function saveLearningInbox(items){setInbox(items);inboxRef.current=items;lsSet("zj_learning_inbox",items);triggerSave();}
   function addFutureToTasks(text,mk){
     const [y,m]=mk.split("-").map(Number);
@@ -5495,7 +5684,7 @@ function App(){
     <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask} courses={courses} onUpdateCourse={updateCourse} syncTick={syncTick}/>
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
-    {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
+    {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey} courses={courses} onAddIdeas={addBrainIdeas}/>}
     {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
     {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey} onAddTask={addTask}/>}
     {showReview&&<ReviewPanel courses={courses} onUpdateNote={updateCourseNote} onClose={()=>setShowReview(false)}/>}
