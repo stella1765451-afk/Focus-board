@@ -87,7 +87,7 @@ const BULLET_TYPES=[
   {sym:"×",label:"已取消",color:"#A32D2D"},
 ];
 const MONTHS=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
-const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false};
+const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false,isPractice:false,requireCheckIn:false};
 
 /* ═══════════════════════════════════════════
    DATE HELPERS
@@ -111,6 +111,35 @@ function isOverdue(str){return str?new Date(str+"T00:00:00")<new Date().setHours
 function getProj(id){return PROJECTS.find(p=>p.id===id)||{name:"无项目",color:"#888"};}
 function monthKey(y,m){return`${y}-${String(m+1).padStart(2,"0")}`;}
 function fmtSize(b){return b<1024?b+"B":b<1048576?Math.round(b/1024)+"KB":(b/1048576).toFixed(1)+"MB";}
+// ── 教练逻辑工具（v4）──────────────────────
+// 练习/抵触类关键词：用于自动识别"最容易拖"的任务
+const PRACTICE_KW=["练习","临摹","速写","作业","刷题","习题","做题","训练","实操","实战","coding","代码题","leetcode","背","默写","复盘"];
+function isBlockTask(t){return t.title?.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务");}
+function isPracticeTask(t){
+  if(t.isPractice===true)return true;
+  const s=(t.title||"")+" "+(t.notes||"");
+  return PRACTICE_KW.some(k=>s.toLowerCase().includes(k.toLowerCase()));
+}
+function hasCheckedIn(t){return!!(t.checkInOutput||t.checkInDate);}
+// 完成前是否必须打卡（节点任务 / 练习类 / 显式要求）
+function needsCheckIn(t){return(isBlockTask(t)||isPracticeTask(t)||t.requireCheckIn===true)&&!hasCheckedIn(t);}
+// 你几乎总是低估——把估时乘以"现实系数"（默认 1.5）
+const FUDGE=1.5;
+function realisticEstimate(mins){return Math.round((mins||0)*FUDGE);}
+function fmtDur(mins){if(!mins)return"";return mins>=60?(mins%60?Math.floor(mins/60)+"小时"+(mins%60)+"分":Math.floor(mins/60)+"小时"):mins+"分钟";}
+// 执行顺序：先吃最抵触的青蛙（练习类）→ 逾期 → 截止近 → 优先级
+function coachOrder(list){
+  const prW={urgent:0,today:1,normal:2};
+  return[...list].sort((a,b)=>{
+    const ap=isPracticeTask(a)?0:1,bp=isPracticeTask(b)?0:1;
+    if(ap!==bp)return ap-bp;
+    const ao=isOverdue(a.due)?0:1,bo=isOverdue(b.due)?0:1;
+    if(ao!==bo)return ao-bo;
+    const ad=a.due||"9999",bd=b.due||"9999";
+    if(ad!==bd)return ad<bd?-1:1;
+    return(prW[a.priority]??3)-(prW[b.priority]??3);
+  });
+}
 
 /* ═══════════════════════════════════════════
    GIST SYNC
@@ -521,6 +550,8 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
   const dueTomorrow=task.due===daysFromNow(1)&&!task.done;
   const isBlockTask=task.title.startsWith("[Day ")&&task.notes?.includes("📌 今日微任务");
   const hasCheckIn=task.checkInOutput||task.checkInDate;
+  const prac=isPracticeTask(task);
+  const needCI=needsCheckIn(task);
 
   // Urgency border color
   let borderColor="#e0ddd6";
@@ -538,7 +569,8 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
         <div style={{fontSize:14,color:task.done?"#aaa":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
         <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:p.color}}>{p.name}</span>
-          {isBlockTask&&!hasCheckIn&&!task.done&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"1px 6px",borderRadius:4,fontWeight:600}}>需打卡</span>}
+          {needCI&&!task.done&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"1px 6px",borderRadius:4,fontWeight:600}}>需打卡</span>}
+          {prac&&!task.done&&<span style={{fontSize:11,color:"#A32D2D",background:"#FCEBEB",padding:"1px 6px",borderRadius:4}}>练习·易拖</span>}
           {hasCheckIn&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4}}>✓ 已打卡</span>}
           {task.notes&&<span style={{fontSize:11,color:"#bbb"}}>📝</span>}
           {task.attachments?.length>0&&<span style={{fontSize:11,color:"#bbb"}}>📎{task.attachments.length}</span>}
@@ -549,7 +581,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
         {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:ov?"#FCEBEB":dueToday?"#FAEEDA":"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
         <MigrateTag count={task.migrateCount}/>
-        {isBlockTask&&!task.done&&onCheckIn&&(
+        {needCI&&!task.done&&onCheckIn&&(
           <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
         )}
         {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
@@ -576,7 +608,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
    TASK DETAIL MODAL
 ═══════════════════════════════════════════ */
 function TaskDetail({task,onClose,onSave,onDelete}){
-  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone],estimate:task.estimate||""});
+  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone],estimate:task.estimate||"",isPractice:task.isPractice||false,requireCheckIn:task.requireCheckIn||false});
   const [ns,setNs]=useState("");
   const fRef=useRef();
   function up(k,v){setF(x=>({...x,[k]:v}));}
@@ -600,6 +632,13 @@ function TaskDetail({task,onClose,onSave,onDelete}){
         </div>
         <div><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>备注</div>
           <textarea value={f.notes} onChange={e=>up("notes",e.target.value)} placeholder="添加任何想记录的内容…" rows={3} style={{width:"100%",padding:"8px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,lineHeight:1.6}}/>
+        </div>
+        <div onClick={()=>up("isPractice",!f.isPractice)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,background:f.isPractice?"#FCEBEB":"#f7f6f3",cursor:"pointer",border:f.isPractice?"0.5px solid #e8b4b4":"0.5px solid transparent"}}>
+          <Check checked={f.isPractice} size={16} onClick={e=>{e.stopPropagation();up("isPractice",!f.isPractice);}}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,color:f.isPractice?"#A32D2D":"#555",fontWeight:500}}>这是练习类任务（最容易拖）</div>
+            <div style={{fontSize:11,color:"#aaa",marginTop:1}}>教练会把它排到当天第一个，且必须打卡才算完成</div>
+          </div>
         </div>
         <div><div style={{fontSize:11,color:"#aaa",marginBottom:6}}>子步骤</div>
           {f.subtasks.map((s,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
@@ -655,13 +694,18 @@ function MigrationPanel({tasks,onMigrate,onClose}){
         {pending.length===0&&<div style={{fontSize:14,color:"#aaa",textAlign:"center",padding:"32px 0"}}>🎉 今天全部完成了！厉害！</div>}
         {pending.map(t=>{
           const p=getProj(t.project);
-          return<div key={t.id} style={{background:"#f7f6f3",borderRadius:10,padding:"12px 14px"}}>
-            <div style={{fontSize:14,fontWeight:500,marginBottom:8,color:t.migrateCount>=3?"#A32D2D":"#1a1a1a"}}>
+          const stuckPrac=isPracticeTask(t)&&(t.migrateCount||0)>=2;
+          const opts=stuckPrac
+            ?[["tomorrow","明天第一个做","#854F0B"],["drop","承认不做·删掉","#A32D2D"]]
+            :[["tomorrow","明天继续","#185FA5"],["nextweek","推到下周","#0F6E56"],["someday","推到未来","#854F0B"],["drop","直接删掉","#A32D2D"]];
+          return<div key={t.id} style={{background:stuckPrac?"#FCEBEB":"#f7f6f3",borderRadius:10,padding:"12px 14px",border:stuckPrac?"0.5px solid #e8b4b4":"none"}}>
+            <div style={{fontSize:14,fontWeight:500,marginBottom:stuckPrac?4:8,color:t.migrateCount>=3?"#A32D2D":"#1a1a1a"}}>
               {t.title}
               {t.migrateCount>0&&<span style={{fontSize:11,color:"#A32D2D",marginLeft:6}}>已推{t.migrateCount}次</span>}
             </div>
+            {stuckPrac&&<div style={{fontSize:11,color:"#A32D2D",marginBottom:8,lineHeight:1.5}}>这个练习你躲了好几天了。不准再"推到未来"——要么明天第一个做掉，要么现在承认不做、删了它。</div>}
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {[["tomorrow","明天继续","#185FA5"],["nextweek","推到下周","#0F6E56"],["someday","推到未来","#854F0B"],["drop","直接删掉","#A32D2D"]].map(([v,l,c])=>(
+              {opts.map(([v,l,c])=>(
                 <button key={v} onClick={()=>decide(t.id,v)} style={{padding:"5px 12px",borderRadius:20,border:`1.5px solid ${decisions[t.id]===v?c:"#e0ddd6"}`,background:decisions[t.id]===v?c:"#fff",color:decisions[t.id]===v?"#fff":c,fontSize:12,cursor:"pointer",fontWeight:decisions[t.id]===v?600:400,transition:"all .15s"}}>{l}</button>
               ))}
             </div>
@@ -2919,6 +2963,11 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
   const [aiLoading,setAiLoading]=useState(false);
   const [selected,setSelected]=useState([]); // selected task ids
   const [newTaskInput,setNewTaskInput]=useState("");
+  const [dumpOpen,setDumpOpen]=useState(false);
+  const [dumpText,setDumpText]=useState("");
+  const [dumpResult,setDumpResult]=useState(null);
+  const [dumpLoading,setDumpLoading]=useState(false);
+  const [addedTitles,setAddedTitles]=useState([]);
   const hour=new Date().getHours();
 
   useEffect(()=>{
@@ -2939,7 +2988,13 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
     });
   },[]);
 
-  const urgentTasks=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"||isOverdue(t.due)));
+  // 脑倾倒加入的任务一出现在清单里，就自动勾选（最多3件）
+  useEffect(()=>{
+    if(!addedTitles.length)return;
+    const ids=tasks.filter(t=>addedTitles.includes(t.title)&&!t.done).map(t=>t.id);
+    if(ids.length){setSelected(s=>[...new Set([...s,...ids])].slice(0,3));setAddedTitles([]);}
+  },[tasks,addedTitles]);
+
   const normalTasks=tasks.filter(t=>!t.done&&t.priority==="normal"&&!isOverdue(t.due));
   const allPickable=[...urgentTasks,...normalTasks].slice(0,8);
 
@@ -2950,16 +3005,43 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
   async function getAISuggestion(){
     if(!geminiKey||aiLoading)return;
     setAiLoading(true);
-    const ctx=allPickable.map(t=>"- "+t.title+"（"+t.priority+(t.due?"，截止"+fmtDate(t.due):"")+")").join("\n");
+    const ctx=allPickable.map(t=>"- "+t.title+"（"+t.priority+(t.due?"，截止"+fmtDate(t.due):"")+(isPracticeTask(t)?"，练习类":"")+")").join("\n");
     try{
       const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({contents:[{parts:[{text:"你是ADHD效率教练。根据以下任务，选出今天最应该优先完成的1-2件事（考虑截止日期和重要性），用一句话解释原因。不超过30字。\n\n任务:\n"+ctx}]}]})
+        body:JSON.stringify({contents:[{parts:[{text:"你是强势直接的ADHD效率教练。从下面任务里替用户做决定：给出今天该做的1-3件，并排出明确的先后顺序（练习/最抵触的事放第一个做，因为他一拖就会忘）。直接下命令，别问他。格式：每行一件，'1. 任务 — 一句理由'。总共不超过60字。\n\n任务:\n"+ctx}]}]})
       });
       const data=await res.json();
       setAiSuggestion(data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()||"");
     }catch(e){}
     setAiLoading(false);
+  }
+
+  // 脑倾倒：把"模糊的一团"理成 今天/这周/以后 三档结构化任务
+  async function analyzeDump(){
+    if(!dumpText.trim()||dumpLoading)return;
+    if(!geminiKey){setDumpResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
+    setDumpLoading(true);
+    try{
+      const prompt="用户脑子里有一团模糊的事，下面是他倒出来的原文。请替他理清，并按时间紧迫度分成三档。只返回JSON，不要任何其他文字：\n"
+        +'{"today":[{"title":"具体到能动手的一句话","priority":"urgent|today|normal","estimate":"预计分钟数字符串"}],"thisweek":[{"title":"..."}],"someday":["想法/以后再说的事字符串"]}\n'
+        +"规则：today 只放今天真的必须做的，最多3件；估时往多了估，因为用户总低估；把模糊的愿望（如'想学X'）放进 someday。\n\n用户原文：\n"+dumpText;
+      const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
+      });
+      const data=await res.json();
+      const raw=data.candidates?.[0]?.content?.parts?.[0]?.text||"{}";
+      setDumpResult(JSON.parse(raw.replace(/```json|```/g,"").trim()));
+    }catch(e){setDumpResult({error:"理不清，再试一次"});}
+    setDumpLoading(false);
+  }
+  // 把今天档加入清单（priority/estimate 一起带上），记下标题供快捷勾选
+  function addDumpToday(){
+    const items=dumpResult?.today||[];
+    items.forEach(it=>{if(onAddTask)onAddTask({title:it.title,priority:it.priority||"today",due:todayStr(),project:1,estimate:it.estimate||""});});
+    setAddedTitles(items.map(it=>it.title));
+    setDumpResult(null);setDumpText("");setDumpOpen(false);
   }
 
   const selTasks=tasks.filter(t=>selected.includes(t.id));
@@ -2990,7 +3072,48 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
       <div style={{width:"100%",maxWidth:460}}>
         <div style={{fontSize:13,color:"rgba(255,255,255,.4)",marginBottom:6,letterSpacing:".08em"}}>{dateStr}</div>
         <div style={{fontSize:22,fontWeight:700,color:"#fff",marginBottom:6}}>今天做哪几件事？</div>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.45)",marginBottom:20}}>最多选3个。选完就是今天的合同，不能随意加。</div>
+        <div style={{fontSize:13,color:"rgba(255,255,255,.45)",marginBottom:16}}>最多选3个。选完就是今天的合同，不能随意加。</div>
+
+        {/* 脑倾倒：模糊→具体的入口，就在选之前 */}
+        <div style={{marginBottom:16,border:"0.5px solid rgba(255,255,255,.12)",borderRadius:10,overflow:"hidden",background:"rgba(255,255,255,.04)"}}>
+          {!dumpOpen&&!dumpResult&&(
+            <button onClick={()=>setDumpOpen(true)} style={{width:"100%",padding:"11px 14px",background:"none",border:"none",color:"rgba(180,210,255,.85)",fontSize:13,cursor:"pointer",textAlign:"left"}}>
+              🧠 脑子里很乱、只有模糊的感觉？先把它倒出来 →
+            </button>
+          )}
+          {dumpOpen&&!dumpResult&&(
+            <div style={{padding:"12px 14px"}}>
+              <textarea value={dumpText} onChange={e=>setDumpText(e.target.value)} rows={5}
+                placeholder={'想到什么写什么，不用整理。试着回答：\n· 有什么一直在脑子里转？\n· 这周有截止的是什么？\n· 昨天没做完的是什么？\n· 做成哪一件，今天就值了？'}
+                style={{width:"100%",padding:"10px 12px",borderRadius:8,border:"0.5px solid rgba(255,255,255,.15)",background:"rgba(0,0,0,.2)",color:"#fff",fontSize:13,lineHeight:1.7,outline:"none",resize:"none"}}/>
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <button onClick={()=>{setDumpOpen(false);setDumpText("");}} style={{padding:"8px 12px",background:"none",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:8,color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>收起</button>
+                <button onClick={analyzeDump} disabled={dumpLoading} style={{flex:1,padding:"8px",background:"rgba(24,95,165,.7)",border:"none",borderRadius:8,color:"#fff",fontSize:13,cursor:"pointer",opacity:dumpLoading?.6:1}}>{dumpLoading?"理清中…":"🪄 帮我理清，分出今天该做的"}</button>
+              </div>
+            </div>
+          )}
+          {dumpResult&&!dumpResult.error&&(
+            <div style={{padding:"12px 14px"}}>
+              {dumpResult.today?.length>0&&<div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:"rgba(255,200,100,.9)",fontWeight:600,marginBottom:5}}>🎯 今天该做（{dumpResult.today.length}）</div>
+                {dumpResult.today.map((it,i)=><div key={i} style={{fontSize:13,color:"#fff",padding:"5px 8px",background:"rgba(255,200,80,.12)",borderRadius:6,marginBottom:3}}>{it.title}{it.estimate?<span style={{color:"rgba(255,255,255,.4)",marginLeft:6}}>~{it.estimate}分</span>:null}</div>)}
+              </div>}
+              {dumpResult.thisweek?.length>0&&<div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:"rgba(180,210,255,.8)",fontWeight:600,marginBottom:5}}>📅 这周（先别急）</div>
+                {dumpResult.thisweek.map((it,i)=><div key={i} style={{fontSize:12,color:"rgba(255,255,255,.6)",padding:"3px 8px"}}>· {typeof it==="string"?it:it.title}</div>)}
+              </div>}
+              {dumpResult.someday?.length>0&&<div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:"rgba(180,255,210,.7)",fontWeight:600,marginBottom:5}}>💭 以后再说</div>
+                {dumpResult.someday.map((it,i)=><div key={i} style={{fontSize:12,color:"rgba(255,255,255,.45)",padding:"3px 8px"}}>· {typeof it==="string"?it:it.title}</div>)}
+              </div>}
+              <div style={{display:"flex",gap:8,marginTop:6}}>
+                <button onClick={()=>{setDumpResult(null);setDumpOpen(true);}} style={{padding:"8px 12px",background:"none",border:"0.5px solid rgba(255,255,255,.15)",borderRadius:8,color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>重写</button>
+                <button onClick={addDumpToday} disabled={!dumpResult.today?.length} style={{flex:1,padding:"8px",background:dumpResult.today?.length?"rgba(15,110,86,.8)":"rgba(255,255,255,.1)",border:"none",borderRadius:8,color:"#fff",fontSize:13,cursor:"pointer"}}>把"今天该做"加进来，去勾选 ↓</button>
+              </div>
+            </div>
+          )}
+          {dumpResult?.error&&<div style={{padding:"12px 14px",fontSize:12,color:"rgba(255,150,150,.9)"}}>{dumpResult.error} <button onClick={()=>setDumpResult(null)} style={{color:"rgba(180,210,255,.8)",background:"none",border:"none",cursor:"pointer"}}>返回</button></div>}
+        </div>
 
         {aiSuggestion&&(
           <div style={{background:"rgba(255,200,80,.12)",border:"0.5px solid rgba(255,200,80,.3)",borderRadius:10,padding:"10px 14px",marginBottom:16,display:"flex",gap:8,alignItems:"flex-start"}}>
@@ -3095,19 +3218,22 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
   return(
     <div style={{position:"fixed",inset:0,background:"linear-gradient(135deg,#0f0c29,#1a1744,#0f3460)",zIndex:600,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{width:"100%",maxWidth:420}}>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.35)",marginBottom:16,textAlign:"center",letterSpacing:".08em"}}>今日合同</div>
-        <div style={{background:"rgba(255,255,255,.06)",border:"0.5px solid rgba(255,255,255,.12)",borderRadius:14,padding:"20px",marginBottom:24}}>
-          {selTasks.map((t,i)=>(
+        <div style={{fontSize:13,color:"rgba(255,255,255,.35)",marginBottom:16,textAlign:"center",letterSpacing:".08em"}}>今日合同 · 按这个顺序做</div>
+        <div style={{background:"rgba(255,255,255,.06)",border:"0.5px solid rgba(255,255,255,.12)",borderRadius:14,padding:"20px",marginBottom:16}}>
+          {coachOrder(selTasks).map((t,i)=>(
             <div key={t.id} style={{display:"flex",alignItems:"flex-start",gap:12,padding:"10px 0",borderBottom:i<selTasks.length-1?"0.5px solid rgba(255,255,255,.08)":"none"}}>
-              <div style={{width:22,height:22,borderRadius:"50%",background:"rgba(24,95,165,.6)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
+              <div style={{width:22,height:22,borderRadius:"50%",background:i===0?"rgba(255,180,60,.85)":"rgba(24,95,165,.6)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>
                 <span style={{color:"#fff",fontSize:12,fontWeight:700}}>{i+1}</span>
               </div>
               <div style={{flex:1}}>
-                <div style={{fontSize:14,color:"#fff",fontWeight:500,lineHeight:1.4}}>{t.title}</div>
+                <div style={{fontSize:14,color:"#fff",fontWeight:500,lineHeight:1.4}}>{t.title}
+                  {i===0&&<span style={{fontSize:10,color:"#1a1a1a",background:"rgba(255,200,100,.95)",padding:"1px 6px",borderRadius:4,marginLeft:6,fontWeight:700}}>先做这个</span>}
+                  {isPracticeTask(t)&&<span style={{fontSize:10,color:"rgba(255,200,100,.9)",marginLeft:6}}>练习·易拖</span>}
+                </div>
                 <div style={{fontSize:11,color:"rgba(255,255,255,.35)",marginTop:3}}>
                   {getProj(t.project).name}
                   {t.due&&<span style={{marginLeft:8}}>📅 {fmtDate(t.due)}</span>}
-                  {t.estimate&&<span style={{marginLeft:8}}>⏱ {t.estimate}分钟</span>}
+                  {t.estimate&&<span style={{marginLeft:8}}>⏱ 约{fmtDur(realisticEstimate(parseInt(t.estimate)||0))}</span>}
                 </div>
                 {t.subtasks&&t.subtasks.length>0&&(
                   <div style={{marginTop:6,fontSize:11,color:"rgba(255,255,255,.4)"}}>
@@ -3118,11 +3244,20 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
             </div>
           ))}
         </div>
-        {totalEst>0&&(
-          <div style={{fontSize:13,color:"rgba(255,200,100,.7)",textAlign:"center",marginBottom:20}}>
-            预计总时长约 {totalEst>=60?Math.round(totalEst/60)+"小时":totalEst+"分钟"}
-          </div>
-        )}
+        {/* 容量闸门：按现实时长算，装不下就逼着砍 */}
+        {totalEst>0&&(()=>{
+          const real=realisticEstimate(totalEst);
+          const tooMuch=real>240||(selected.length>=3&&real>180);
+          return<div style={{marginBottom:20}}>
+            <div style={{fontSize:13,color:"rgba(255,200,100,.7)",textAlign:"center",marginBottom:tooMuch?8:0}}>
+              你估了{fmtDur(totalEst)}，按你的习惯真实约 {fmtDur(real)}
+            </div>
+            {tooMuch&&<div style={{background:"rgba(255,120,120,.12)",border:"0.5px solid rgba(255,120,120,.3)",borderRadius:10,padding:"10px 14px"}}>
+              <div style={{fontSize:12,color:"rgba(255,170,170,.95)",lineHeight:1.6,marginBottom:8}}>这几乎装不进一天。你一向低估，硬塞只会又一次没做完。砍掉最不重要的那件，今天反而能真的完成。</div>
+              <button onClick={()=>{const cut=coachOrder(selTasks).slice(-1)[0];if(cut)setSelected(s=>s.filter(id=>id!==cut.id));}} style={{width:"100%",padding:"8px",background:"rgba(163,45,45,.5)",border:"none",borderRadius:8,color:"#fff",fontSize:13,cursor:"pointer"}}>砍掉最后一件（{coachOrder(selTasks).slice(-1)[0]?.title?.slice(0,12)}…）</button>
+            </div>}
+          </div>;
+        })()}
         <button onClick={onDismiss} style={{width:"100%",padding:"15px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:600,cursor:"pointer",letterSpacing:".04em"}}>
           ✓ 签下合同，开始专注
         </button>
@@ -4659,6 +4794,7 @@ function App(){
   const [projView,setProjView]=useState(null);
   const [showMigration,setShowMigration]=useState(false);
   const [showBrainDump,setShowBrainDump]=useState(false);
+  const [focusNowOnly,setFocusNowOnly]=useState(true);
   const [showReview,setShowReview]=useState(false);
   const [showMonthlyReview,setShowMonthlyReview]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
@@ -4815,6 +4951,9 @@ function App(){
   }
 
   function toggleTask(id){
+    const cur=tasksRef.current.find(t=>t.id===id);
+    // 完成闸门：练习/节点类任务，没打卡不许直接算完成 → 改为弹打卡框
+    if(cur&&!cur.done&&needsCheckIn(cur)){setCheckInTask(cur);return;}
     setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
     // 同步 episode 状态
     setCourses(cs=>{
@@ -5016,6 +5155,52 @@ function App(){
       )}
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
         {view==="today"&&<>
+          {/* 练习拖延预警条：躲了好几天的练习，逼一个二选一 */}
+          {(()=>{
+            const stuck=tasks.filter(t=>!t.done&&isPracticeTask(t)&&(t.migrateCount||0)>=2);
+            if(!stuck.length)return null;
+            return<div style={{background:"#FCEBEB",border:"1.5px solid #e8b4b4",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#A32D2D",marginBottom:8}}>⚠ 你有 {stuck.length} 个练习躲了好几天</div>
+              {stuck.map(t=>(
+                <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.6)",borderRadius:7,padding:"7px 10px",marginBottom:5}}>
+                  <div style={{flex:1,fontSize:13,color:"#1a1a1a"}}>{t.title}<span style={{fontSize:11,color:"#A32D2D",marginLeft:6}}>推了{t.migrateCount}次</span></div>
+                  <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>做最小版·打卡</button>
+                  <button onClick={()=>{if(window.confirm("承认今天也不会做它，删掉这个练习？"))delTask(t.id);}} style={{padding:"4px 10px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:5,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>砍掉</button>
+                </div>
+              ))}
+              <div style={{fontSize:11,color:"#A32D2D",opacity:.75,marginTop:2}}>规则：要么现在做最小版本，要么承认不做、删掉。别让它一直挂着。</div>
+            </div>;
+          })()}
+          {/* 现在就做这一件：屏幕上只给一个答案 */}
+          {(()=>{
+            const fo=coachOrder(focus.filter(t=>!t.done));
+            const nowT=fo[0];if(!nowT)return null;
+            const rest=fo.slice(1);
+            const prac=isPracticeTask(nowT);
+            const est=parseInt(nowT.estimate||"0")||0;
+            const real=realisticEstimate(est);
+            return<div style={{background:prac?"linear-gradient(135deg,#FFF5E0,#FAEEDA)":"linear-gradient(135deg,#EBF3FB,#E6F1FB)",border:`1.5px solid ${prac?"#f0c070":"#B5D4F4"}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:prac?"#854F0B":"#185FA5"}}>🎯 现在就做这一件</span>
+                <button onClick={()=>setFocusNowOnly(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{focusNowOnly?"显示全部 ▾":"只看当前 ▴"}</button>
+              </div>
+              <div onClick={()=>setDetail(nowT)} style={{fontSize:18,fontWeight:600,color:"#1a1a1a",lineHeight:1.35,cursor:"pointer",marginBottom:6}}>{nowT.title}</div>
+              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:prac?10:12}}>
+                <span style={{fontSize:12,color:getProj(nowT.project).color}}>{getProj(nowT.project).name}</span>
+                {est>0&&<span style={{fontSize:12,color:"#854F0B"}}>⏱ 你估{fmtDur(est)} · 按你习惯约{fmtDur(real)}</span>}
+                {nowT.subtasks?.length>0&&<span style={{fontSize:12,color:"#185FA5"}}>第一步：{nowT.subtasks.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks[0]}</span>}
+              </div>
+              {prac&&<div style={{fontSize:12,color:"#854F0B",background:"rgba(255,255,255,.55)",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55}}>💪 这是你最容易拖的练习类。规则：先做<b>最小版本</b>，2分钟就行——别想着一次做完。开始本身才是难关。</div>}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {needsCheckIn(nowT)
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:120,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
+                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#185FA5",border:"0.5px solid #B5D4F4",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
+                {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"11px 14px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:9,fontSize:13,cursor:"pointer"}}>做不动·砍掉</button>}
+              </div>
+              {rest.length>0&&<div style={{fontSize:11,color:"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
+            </div>;
+          })()}
           {/* Block tasks today banner */}
           {(()=>{
             const blockToday=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr());
@@ -5065,22 +5250,22 @@ function App(){
             ))}
           </div>
           {/* Time estimate warning */}
-          {(()=>{const total=getTotalEstimate(focus.filter(t=>!t.done));return total>0?(
+          {(()=>{const total=getTotalEstimate(focus.filter(t=>!t.done));const real=realisticEstimate(total);return total>0?(
             <div style={{fontSize:12,color:"#854F0B",background:"#FAEEDA",borderRadius:6,padding:"6px 12px",marginBottom:12}}>
-              ⏱ 今日重点预计需要约 {total>=60?Math.round(total/60)+"小时":total+"分钟"}
+              ⏱ 你估了约{fmtDur(total)}，但你几乎总是低估——按 {fmtDur(real)} 来安排今天
             </div>
           ):null;})()}
           {/* Habit tracker */}
           <HabitTracker habits={habits} onUpdateHabits={updateHabits}/>
           {/* Pomodoro stats */}
           {pomLog.length>0&&<PomodoroStats log={pomLog}/>}
-          <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
+          {!focusNowOnly&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-              <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 现在专注这里</span>
+              <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 按顺序做（前面先做）</span>
               <button onClick={()=>setAiOpen(true)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>AI重新规划↗</button>
             </div>
-            {focus.length?focus.map(t=><TaskRow key={t.id} task={t} {...tProps}/>):<div style={{fontSize:13,color:"#aaa",padding:"8px 0"}}>没有紧急任务，今天很轻松 🎉</div>}
-          </div>
+            {focus.length?coachOrder(focus).map(t=><TaskRow key={t.id} task={t} {...tProps}/>):<div style={{fontSize:13,color:"#aaa",padding:"8px 0"}}>没有紧急任务，今天很轻松 🎉</div>}
+          </div>}
           {other.length>0&&<><div style={{fontSize:13,fontWeight:500,marginBottom:10,color:"#888"}}>其他待办</div>{other.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
           {done.length>0&&<><div style={{fontSize:13,fontWeight:500,margin:"18px 0 10px",color:"#bbb"}}>已完成 ({done.length})</div>{done.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
         </>}
