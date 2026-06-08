@@ -1245,9 +1245,11 @@ function parseExternalPlan(content){
 // ══════════════════════════════════════════
 // §AIPANEL  AI助手面板 AIPanel
 // ══════════════════════════════════════════
-function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask,courses,onUpdateCourse}){
+function AIPanel({open,onClose,tasks,onSubtasksAdded,sendRef,apiKey,setApiKey,onAddTask,courses,onUpdateCourse,syncTick}){
   // ── history: [{id, name, group, msgs:[{role,text,images}], createdAt}]
   const [history,setHistory]=useState(()=>loadAIHistory());
+  // 云端同步完成后重新从本地读历史（loadFromGist 已写入），避免显示旧空历史/覆盖
+  useEffect(()=>{if(syncTick)setHistory(loadAIHistory());},[syncTick]);
   const [activeConvId,setActiveConvId]=useState(null);
   const [showHistory,setShowHistory]=useState(false);
   const [editingName,setEditingName]=useState(null); // conv id being renamed
@@ -2863,12 +2865,11 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 // ══════════════════════════════════════════
 // §LEARNING  学习模块 LearningView
 // ══════════════════════════════════════════
-function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub,onSaveInbox}){
+function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub,inbox=[],onSaveInbox}){
   const [detail,setDetail]=useState(null);
   const [showAdd,setShowAdd]=useState(false);
   const [showInbox,setShowInbox]=useState(false);
   const [inboxText,setInboxText]=useState("");
-  const [inbox,setInbox]=useState(()=>lsGet("zj_learning_inbox",[]));
   const [showStandby,setShowStandby]=useState(false);
 
   const active=courses.filter(c=>c.active&&!c.archived);
@@ -2876,7 +2877,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
   const current=active.slice(0,3);
   const overflow=active.slice(3);
 
-  function saveInbox(items){setInbox(items);lsSet("zj_learning_inbox",items);if(onSaveInbox)onSaveInbox(items);}
+  function saveInbox(items){if(onSaveInbox)onSaveInbox(items);}
   function addToInbox(){
     if(!inboxText.trim())return;
     saveInbox([...inbox,{id:Date.now(),text:inboxText.trim(),date:todayStr()}]);
@@ -4785,6 +4786,8 @@ function App(){
   const [futureLog,setFutureLog]=useState(()=>lsGet("zj_future_log",{}));
   const [courses,setCourses]=useState(()=>lsGet("zj_courses",[]).map(c=>({...BLANK_COURSE,...c})));
   const [nextId,setNextId]=useState(()=>lsGet("zj_next_id",10));
+  const [inbox,setInbox]=useState(()=>lsGet("zj_learning_inbox",[]));
+  const [syncTick,setSyncTick]=useState(0); // 云端拉取完成后自增，通知子组件刷新本地状态
   const [view,setView]=useState("today");
   const [aiOpen,setAiOpen]=useState(false);
   const [showAdd,setShowAdd]=useState(false);
@@ -4795,6 +4798,7 @@ function App(){
   const [showMigration,setShowMigration]=useState(false);
   const [showBrainDump,setShowBrainDump]=useState(false);
   const [focusNowOnly,setFocusNowOnly]=useState(true);
+  const [timer,setTimer]=useState(null); // {taskId,total,left,running,logged} 当前任务专注计时
   const [showReview,setShowReview]=useState(false);
   const [showMonthlyReview,setShowMonthlyReview]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
@@ -4832,6 +4836,7 @@ function App(){
   useEffect(()=>{habitsRef.current=habits;},[habits]);
   useEffect(()=>{pomLogRef.current=pomLog;},[pomLog]);
   useEffect(()=>{blockingLayersRef.current=blockingLayers;},[blockingLayers]);
+  useEffect(()=>{inboxRef.current=inbox;},[inbox]);
 
   // load from gist on mount
   function loadFromGist(){
@@ -4850,9 +4855,10 @@ function App(){
         if(data.nextId){setNextId(data.nextId);lsSet("zj_next_id",data.nextId);}
         if(data.blockingLayers&&data.blockingLayers.length>0){setBlockingLayers(data.blockingLayers);lsSet("zj_blocking_layers",data.blockingLayers);}
         if(data.habits&&data.habits.length>0){setHabits(data.habits);lsSet("zj_habits",data.habits);}
-        if(data.learningInbox&&data.learningInbox.length>0){lsSet("zj_learning_inbox",data.learningInbox);inboxRef.current=data.learningInbox;}
+        if(data.learningInbox&&data.learningInbox.length>0){setInbox(data.learningInbox);inboxRef.current=data.learningInbox;lsSet("zj_learning_inbox",data.learningInbox);}
         if(data.pomLog&&data.pomLog.length>0){setPomLog(data.pomLog);lsSet("zj_pom_log",data.pomLog);}
         if(data.aiHistory&&data.aiHistory.length>0){saveAIHistory(data.aiHistory);}
+        setSyncTick(x=>x+1);
         setSyncStatus("saved");
       } else {
         setSyncStatus("idle");
@@ -4918,7 +4924,8 @@ function App(){
         pomLog:pomLogRef.current,
         nextId:nidToSave,
         blockingLayers:blockingLayersRef.current,
-        learningInbox:inboxRef.current
+        learningInbox:inboxRef.current,
+        aiHistory:loadAIHistory()
       })
         .then(()=>setSyncStatus("saved"))
         .catch(e=>{setSyncStatus("error");console.error("Gist save failed:",e);});
@@ -5033,6 +5040,7 @@ function App(){
   function addQuick(){if(!quick.trim())return;addTask({title:quick.trim(),project:1,due:"",priority:"normal"});setQuick("");}
   function addModal(){if(!nTask.title.trim())return;addTask(nTask);setShowAdd(false);setNTask({title:"",project:1,due:todayStr(),startDate:"",priority:"today"});}
   function addBrainTasks(titles){titles.forEach(title=>addTask({title,project:1,due:"",priority:"normal"}));}
+  function saveLearningInbox(items){setInbox(items);inboxRef.current=items;lsSet("zj_learning_inbox",items);triggerSave();}
   function addFutureToTasks(text,mk){
     const [y,m]=mk.split("-").map(Number);
     const due=yyyymmdd(new Date(y,m,1));
@@ -5048,6 +5056,37 @@ function App(){
     document.body.classList.toggle("dark-mode",darkMode);
     lsSet("zj_dark_mode",darkMode);
   },[darkMode]);
+  // AI 面板关闭后，把对话历史刷上云（aiHistory 现在已进 Gist payload）
+  useEffect(()=>{
+    if(aiOpen||isFirstLoad.current)return;
+    triggerSave();
+  },[aiOpen]);
+  // 专注计时：每秒递减
+  useEffect(()=>{
+    if(!timer||!timer.running)return;
+    const id=setInterval(()=>{
+      setTimer(tm=>{if(!tm||!tm.running)return tm;const left=tm.left-1;return left<=0?{...tm,left:0,running:false}:{...tm,left};});
+    },1000);
+    return()=>clearInterval(id);
+  },[timer?.running,timer?.taskId]);
+  // 计时自然结束：响铃 + 记一次番茄
+  useEffect(()=>{
+    if(timer&&!timer.running&&timer.left===0&&!timer.logged){
+      try{SoundEngine.routineDone();}catch(e){}
+      addPomEntry(1,Math.round(timer.total/60));
+      setTimer(tm=>tm?{...tm,logged:true}:tm);
+    }
+  },[timer?.left,timer?.running]);
+  function startTimer(task){
+    const mins=realisticEstimate(parseInt(task.estimate||"0")||0)||25;
+    setTimer({taskId:task.id,total:mins*60,left:mins*60,running:true,logged:false});
+    try{SoundEngine.stepStart();}catch(e){}
+  }
+  function toggleTimerRun(){setTimer(tm=>tm?{...tm,running:!tm.running}:tm);}
+  function stopTimer(){
+    if(timer&&!timer.logged){const elapsed=Math.round((timer.total-timer.left)/60);if(elapsed>=1)addPomEntry(0,elapsed);}
+    setTimer(null);
+  }
   // Routine task done handler
   function routineTaskDone(taskId,extra={}){
     setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,done:true,...extra}:t));
@@ -5179,6 +5218,9 @@ function App(){
             const prac=isPracticeTask(nowT);
             const est=parseInt(nowT.estimate||"0")||0;
             const real=realisticEstimate(est);
+            const tm=timer&&timer.taskId===nowT.id?timer:null;
+            const mmss=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(Math.max(0,s%60)).padStart(2,"0");
+            const pct=tm?Math.round((1-tm.left/tm.total)*100):0;
             return<div style={{background:prac?"linear-gradient(135deg,#FFF5E0,#FAEEDA)":"linear-gradient(135deg,#EBF3FB,#E6F1FB)",border:`1.5px solid ${prac?"#f0c070":"#B5D4F4"}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:prac?"#854F0B":"#185FA5"}}>🎯 现在就做这一件</span>
@@ -5191,10 +5233,25 @@ function App(){
                 {nowT.subtasks?.length>0&&<span style={{fontSize:12,color:"#185FA5"}}>第一步：{nowT.subtasks.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks[0]}</span>}
               </div>
               {prac&&<div style={{fontSize:12,color:"#854F0B",background:"rgba(255,255,255,.55)",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55}}>💪 这是你最容易拖的练习类。规则：先做<b>最小版本</b>，2分钟就行——别想着一次做完。开始本身才是难关。</div>}
+              {/* 专注计时进度条 */}
+              {tm&&<div style={{background:"rgba(255,255,255,.65)",borderRadius:10,padding:"10px 12px",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                  <span style={{fontSize:20,fontWeight:700,color:tm.left===0?"#0F6E56":"#1a1a1a",fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
+                  <div style={{display:"flex",gap:6}}>
+                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#fff":"#185FA5",color:tm.running?"#185FA5":"#fff",border:"0.5px solid #B5D4F4",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
+                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#888",border:"0.5px solid #e0ddd6",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
+                  </div>
+                </div>
+                <div style={{height:6,background:"rgba(0,0,0,.08)",borderRadius:3,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#0F6E56":"#185FA5",borderRadius:3,transition:"width 1s linear"}}/>
+                </div>
+                <div style={{fontSize:11,color:"#999",marginTop:4}}>{tm.left===0?"这一段完成了，记一次专注。点上面打卡/完成":"专注 "+Math.round(tm.total/60)+" 分钟 · 已过 "+Math.round((tm.total-tm.left)/60)+" 分"}</div>
+              </div>}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#185FA5",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
                 {needsCheckIn(nowT)
-                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
-                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:120,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
                 {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#185FA5",border:"0.5px solid #B5D4F4",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
                 {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"11px 14px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:9,fontSize:13,cursor:"pointer"}}>做不动·砍掉</button>}
               </div>
@@ -5276,7 +5333,7 @@ function App(){
         {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
         {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
-        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub} onSaveInbox={items=>{inboxRef.current=items;triggerSave();}}/>}
+        {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub} inbox={inbox} onSaveInbox={saveLearningInbox}/>}
         {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey} onSaveLayers={bl=>{setBlockingLayers(bl);blockingLayersRef.current=bl;triggerSave();}}/>}
         {view==="projects"&&(projView
           ?<ProjectPanel project={projView} tasks={tasks} onOpen={setDetail} onBack={()=>setProjView(null)}/>
@@ -5297,7 +5354,7 @@ function App(){
       </div>
     </div>
 
-    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask} courses={courses} onUpdateCourse={updateCourse}/>
+    <AIPanel open={aiOpen} onClose={()=>setAiOpen(false)} tasks={tasks} onSubtasksAdded={addSubsFromAI} sendRef={aiRef} apiKey={geminiKey} setApiKey={setGeminiKey} onAddTask={addTask} courses={courses} onUpdateCourse={updateCourse} syncTick={syncTick}/>
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey}/>}
