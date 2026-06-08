@@ -2889,8 +2889,19 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
   const qi=quarterInfo();
   const [budget,setBudget]=useState(()=>lsGet("zj_week_study_budget",10));
   const setBud=v=>{const n=Math.max(1,v);setBudget(n);lsSet("zj_week_study_budget",n);};
+  // 每集时长手动覆盖（courseId → 分钟数）
+  const [avgOverride,setAvgOverride]=useState(()=>lsGet("zj_avg_override",{}));
+  const [editingAvg,setEditingAvg]=useState(null); // courseId being edited
+  const [avgInput,setAvgInput]=useState("");
+  function saveAvg(cid){
+    const v=parseInt(avgInput);
+    if(v>0){const next={...avgOverride,[cid]:v};setAvgOverride(next);lsSet("zj_avg_override",next);}
+    setEditingAvg(null);setAvgInput("");
+  }
   const list=courses.filter(c=>!c.archived);
   const setWeekly=(c,v)=>onUpdate({...c,weeklyTarget:Math.max(0,v)});
+  // 获取某课的每集分钟数（手动覆盖优先，否则从章节均值，否则默认30）
+  function getAvg(c){return avgOverride[c.id]||courseAvgMin(c);}
 
   let totalWeeklyMin=0;
   const rows=list.map(c=>{
@@ -2899,7 +2910,7 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
     const totalN=Math.max(c.totalEpisodes||0,eps.length);
     const remaining=Math.max(0,totalN-doneN);
     const wt=c.weeklyTarget||0;
-    const avg=courseAvgMin(c);
+    const avg=getAvg(c);
     const weeklyMin=wt*avg;
     if(wt>0)totalWeeklyMin+=weeklyMin;
     const weeksToFinish=wt>0?Math.ceil(remaining/wt):null;
@@ -2959,7 +2970,15 @@ function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
             <button onClick={()=>setWeekly(c,wt-1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>−</button>
             <span style={{fontSize:14,fontWeight:600,minWidth:42,textAlign:"center"}}>{wt} 集</span>
             <button onClick={()=>setWeekly(c,wt+1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>+</button>
-            <span style={{fontSize:11,color:"#bbb"}}>~{avg}分/集</span>
+            {editingAvg===c.id?(
+              <input autoFocus type="number" value={avgInput} onChange={e=>setAvgInput(e.target.value)}
+                onBlur={()=>saveAvg(c.id)} onKeyDown={e=>{if(e.key==="Enter")saveAvg(c.id);if(e.key==="Escape"){setEditingAvg(null);setAvgInput("");}}}
+                style={{width:52,fontSize:12,border:"0.5px solid #185FA5",borderRadius:4,padding:"2px 5px",outline:"none",textAlign:"center"}} min={1} max={999}/>
+            ):(
+              <span onClick={()=>{setEditingAvg(c.id);setAvgInput(String(avg));}}
+                style={{fontSize:11,color:avgOverride[c.id]?"#185FA5":"#bbb",cursor:"pointer",borderBottom:"1px dashed "+(avgOverride[c.id]?"#185FA5":"#ddd"),paddingBottom:1}}
+                title="点击修改每集时长">~{avg}分/集</span>
+            )}
           </div>
           <button onClick={()=>onUpdate({...c,active:!c.active})} style={{fontSize:12,color:c.active?"#854F0B":"#185FA5",background:"none",border:"none",cursor:"pointer"}}>{c.active?"转候补":"设为在学"}</button>
         </div>
@@ -3136,9 +3155,16 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
     if(!geminiKey){setDumpResult({error:"请先在AI助手里设置 Gemini API Key"});return;}
     setDumpLoading(true);
     try{
-      const prompt="用户脑子里有一团模糊的事，下面是他倒出来的原文。请替他理清，并按时间紧迫度分成三档。只返回JSON，不要任何其他文字：\n"
-        +'{"today":[{"title":"具体到能动手的一句话","priority":"urgent|today|normal","estimate":"预计分钟数字符串"}],"thisweek":[{"title":"..."}],"someday":["想法/以后再说的事字符串"]}\n'
-        +"规则：today 只放今天真的必须做的，最多3件；估时往多了估，因为用户总低估；把模糊的愿望（如'想学X'）放进 someday。\n\n用户原文：\n"+dumpText;
+      const prompt="你是ADHD效率教练。用户把脑子里的事倒出来了，请替他拆成能直接动手的具体任务。\n"
+        +"只返回JSON，不要任何其他文字：\n"
+        +'{"today":[{"title":"一个动词开头、说清楚做什么+在哪做+做多久的具体行动（如：打开Figma，画登录页面线框图，30分钟）","priority":"urgent|today|normal","estimate":"预计分钟数字符串"}],"thisweek":[{"title":"这周内要做的具体一步"}],"someday":["模糊的愿望/想法/以后再说"]}\n'
+        +"规则：\n"
+        +"1. today 只放今天真的要做的，最多3件，每件必须是一个人坐下来就能开始的具体动作\n"
+        +"2. 禁止出现'研究''了解''思考''规划'这类模糊动词——改成'打开X，做Y，Z分钟'\n"
+        +"3. 估时往多估（用户总低估），宁可高估也不要低估\n"
+        +"4. 模糊的愿望（如'想学画画''要健身'）一律放进 someday，不要强行放进 today\n"
+        +"5. 如果用户原文已经有具体任务，保持原意，只在动词上补具体\n\n"
+        +"用户原文：\n"+dumpText;
       const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+geminiKey,{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})
