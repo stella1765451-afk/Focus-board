@@ -259,6 +259,7 @@ const BLANK_COURSE={
   totalEpisodes:0,episodes:[],
   notes:[],assignments:[],
   active:true,archived:false,
+  weeklyTarget:0,
   lastStudied:todayStr(),createdAt:"",
   color:"#185FA5",
 };
@@ -2864,6 +2865,112 @@ function CourseCard({course,onOpen,onToggleActive,onArchive}){
 // ── Learning View (main) ──
 // ══════════════════════════════════════════
 // §LEARNING  学习模块 LearningView
+
+// 季度信息：当前是第几季、剩几周
+function quarterInfo(){
+  const now=new Date();
+  const qStartMonth=Math.floor(now.getMonth()/3)*3;
+  const start=new Date(now.getFullYear(),qStartMonth,1);
+  const end=new Date(now.getFullYear(),qStartMonth+3,0);
+  const msW=7*24*3600*1000;
+  const today0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const totalWeeks=Math.round((end-start)/msW)||13;
+  const weeksLeft=Math.max(0,Math.ceil((end-today0)/msW));
+  const weekNo=Math.min(totalWeeks,Math.max(1,Math.floor((today0-start)/msW)+1));
+  return{q:Math.floor(qStartMonth/3)+1,year:now.getFullYear(),start,end,totalWeeks,weeksLeft,weekNo};
+}
+function courseAvgMin(c){
+  const ds=(c.episodes||[]).map(e=>parseInt(e.duration)).filter(n=>n>0);
+  return ds.length?Math.round(ds.reduce((a,b)=>a+b,0)/ds.length):30;
+}
+
+// 季度课表：每周节奏 + 容量是否装得下（6-7门并行也能管）
+function QuarterPlanner({courses,onUpdate,onClose,onAddTaskToBoard}){
+  const qi=quarterInfo();
+  const [budget,setBudget]=useState(()=>lsGet("zj_week_study_budget",10));
+  const setBud=v=>{const n=Math.max(1,v);setBudget(n);lsSet("zj_week_study_budget",n);};
+  const list=courses.filter(c=>!c.archived);
+  const setWeekly=(c,v)=>onUpdate({...c,weeklyTarget:Math.max(0,v)});
+
+  let totalWeeklyMin=0;
+  const rows=list.map(c=>{
+    const eps=c.episodes||[];
+    const doneN=eps.filter(e=>e.status==="done").length;
+    const totalN=Math.max(c.totalEpisodes||0,eps.length);
+    const remaining=Math.max(0,totalN-doneN);
+    const wt=c.weeklyTarget||0;
+    const avg=courseAvgMin(c);
+    const weeklyMin=wt*avg;
+    if(wt>0)totalWeeklyMin+=weeklyMin;
+    const weeksToFinish=wt>0?Math.ceil(remaining/wt):null;
+    const finishable=weeksToFinish!==null&&weeksToFinish<=qi.weeksLeft;
+    return{c,doneN,totalN,remaining,wt,avg,weeklyMin,weeksToFinish,finishable};
+  });
+  const realWeekly=realisticEstimate(totalWeeklyMin);
+  const budgetMin=budget*60;
+  const over=realWeekly>budgetMin;
+  const plannedCount=rows.filter(r=>r.wt>0).length;
+
+  return<div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+      <div>
+        <div style={{fontSize:16,fontWeight:600}}>📅 季度课表 · {qi.year} Q{qi.q}</div>
+        <div style={{fontSize:12,color:"#aaa",marginTop:2}}>第 {qi.weekNo}/{qi.totalWeeks} 周 · 本季还剩 {qi.weeksLeft} 周 · {list.length} 门课</div>
+      </div>
+      <button onClick={onClose} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>← 返回课程</button>
+    </div>
+
+    {/* 容量表：这季每周排了多少、装不装得下 */}
+    <div style={{background:over?"#FCEBEB":"#EAF6EF",border:`1.5px solid ${over?"#e8b4b4":"#bfe3cd"}`,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{fontSize:13,color:"#1a1a1a"}}>
+          {plannedCount} 门已排节奏，每周共 <b>{fmtDur(totalWeeklyMin)||"0分钟"}</b>
+          <span style={{color:"#854F0B"}}>（按你习惯约 {fmtDur(realWeekly)||"0分钟"}）</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:12,color:"#888"}}>每周可学</span>
+          <button onClick={()=>setBud(budget-1)} style={{width:24,height:24,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer"}}>−</button>
+          <span style={{fontSize:14,fontWeight:600,minWidth:34,textAlign:"center"}}>{budget}h</span>
+          <button onClick={()=>setBud(budget+1)} style={{width:24,height:24,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer"}}>+</button>
+        </div>
+      </div>
+      <div style={{fontSize:12.5,color:over?"#A32D2D":"#0F6E56",marginTop:8,fontWeight:500,lineHeight:1.5}}>
+        {over?`⚠ 排太满了：约 ${fmtDur(realWeekly)} 超过你每周 ${budget} 小时的真实容量。砍掉一两门的节奏，或先把几门转候补——同时学不完会全卡住。`:plannedCount===0?"还没给任何课排节奏。给下面的课点 + 设个每周集数，下方会算出本季能不能学完。":`✓ 装得下：约 ${fmtDur(realWeekly)} 在你每周 ${budget} 小时之内。`}
+      </div>
+    </div>
+
+    {/* 每门课的节奏 + 本季能否学完 */}
+    {list.length===0&&<div style={{background:"#fff",border:"0.5px dashed #e0ddd6",borderRadius:12,padding:"28px",textAlign:"center",color:"#aaa",fontSize:14}}>还没有课程，先去课程页添加</div>}
+    {rows.map(({c,doneN,totalN,remaining,wt,avg,weeksToFinish,finishable})=>{
+      const pct=totalN?Math.round(doneN/totalN*100):0;
+      return<div key={c.id} style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"14px 16px",marginBottom:10,opacity:c.active?1:.7}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span style={{width:10,height:10,borderRadius:"50%",background:c.color,flexShrink:0}}/>
+          <span style={{fontSize:14,fontWeight:500,flex:1}}>{c.title||"未命名课程"}</span>
+          {!c.active&&<span style={{fontSize:11,color:"#aaa",background:"#f0f0f0",padding:"1px 6px",borderRadius:4}}>候补</span>}
+          <span style={{fontSize:12,color:"#aaa"}}>{doneN}/{totalN} 集</span>
+        </div>
+        <div style={{height:5,background:"#f0eee9",borderRadius:3,overflow:"hidden",marginBottom:10}}>
+          <div style={{height:"100%",width:pct+"%",background:c.color,borderRadius:3}}/>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:12,color:"#888"}}>每周</span>
+            <button onClick={()=>setWeekly(c,wt-1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>−</button>
+            <span style={{fontSize:14,fontWeight:600,minWidth:42,textAlign:"center"}}>{wt} 集</span>
+            <button onClick={()=>setWeekly(c,wt+1)} style={{width:26,height:26,borderRadius:6,border:"0.5px solid #ccc",background:"#fff",cursor:"pointer",fontSize:15}}>+</button>
+            <span style={{fontSize:11,color:"#bbb"}}>~{avg}分/集</span>
+          </div>
+          <button onClick={()=>onUpdate({...c,active:!c.active})} style={{fontSize:12,color:c.active?"#854F0B":"#185FA5",background:"none",border:"none",cursor:"pointer"}}>{c.active?"转候补":"设为在学"}</button>
+        </div>
+        <div style={{fontSize:12,marginTop:8,color:wt===0?"#bbb":finishable?"#0F6E56":"#A32D2D"}}>
+          {remaining===0?"🎉 已全部学完":wt===0?"未排节奏（每周 0 集，不会推进）":finishable?`按此节奏 ${weeksToFinish} 周学完 · 本季能学完（剩 ${qi.weeksLeft} 周）`:`按此节奏要 ${weeksToFinish} 周 · 本季学不完（只剩 ${qi.weeksLeft} 周）——加快节奏或下季继续`}
+          {wt>0&&remaining>0&&onAddTaskToBoard&&<button onClick={()=>onAddTaskToBoard({title:`${c.title}：学 ${wt} 集`,project:1,priority:"today",due:todayStr(),estimate:String(wt*avg)})} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",marginLeft:8}}>+ 推一周量到任务板</button>}
+        </div>
+      </div>;
+    })}
+  </div>;
+}
 // ══════════════════════════════════════════
 function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiKey,onAddPomEntry,tasks,onToggleSub,inbox=[],onSaveInbox}){
   const [detail,setDetail]=useState(null);
@@ -2871,6 +2978,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
   const [showInbox,setShowInbox]=useState(false);
   const [inboxText,setInboxText]=useState("");
   const [showStandby,setShowStandby]=useState(false);
+  const [showPlanner,setShowPlanner]=useState(false);
 
   const active=courses.filter(c=>c.active&&!c.archived);
   const standby=courses.filter(c=>!c.active&&!c.archived);
@@ -2892,6 +3000,7 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
     const course=courses.find(c=>c.id===detail);
     if(course)return<CourseDetail course={course} onClose={()=>setDetail(null)} onUpdate={onUpdate} onAddTaskToBoard={onAddTaskToBoard} geminiKey={geminiKey} onAddPomEntry={onAddPomEntry} tasks={tasks} onToggleSub={onToggleSub}/>;
   }
+  if(showPlanner)return<QuarterPlanner courses={courses} onUpdate={onUpdate} onClose={()=>setShowPlanner(false)} onAddTaskToBoard={onAddTaskToBoard}/>;
 
   return<div>
     <LearningHeatmap courses={courses}/>
@@ -2902,7 +3011,10 @@ function LearningView({courses,onUpdate,onAdd,onArchive,onAddTaskToBoard,geminiK
         <span style={{fontSize:14,fontWeight:500}}>当前学习</span>
         <span style={{fontSize:12,color:"#aaa",marginLeft:8}}>{current.length}/3</span>
       </div>
-      <button onClick={()=>setShowAdd(true)} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加课程</button>
+      <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <button onClick={()=>setShowPlanner(true)} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>📅 季度课表</button>
+        <button onClick={()=>setShowAdd(true)} style={{fontSize:13,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>+ 添加课程</button>
+      </div>
     </div>
     {current.length===0&&<div style={{background:"#fff",border:"0.5px dashed #e0ddd6",borderRadius:12,padding:"32px",textAlign:"center",marginBottom:16}}>
       <div style={{fontSize:32,marginBottom:8}}>📚</div>
