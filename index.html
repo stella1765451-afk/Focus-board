@@ -598,8 +598,8 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
         {needCI&&!task.done&&onCheckIn&&(
           <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
         )}
-        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
-        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
+        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#7C3AED",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
+        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#7C3AED",background:"#F5F3FF",border:"0.5px solid #C4B5FD",borderRadius:4,cursor:"pointer",padding:"1px 6px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
       </div>
     </div>
     {task.expanded&&task.subtasks.length>0&&<div style={{paddingLeft:40,marginTop:3,display:"flex",flexDirection:"column",gap:3}}>
@@ -608,6 +608,13 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
         {s}
       </div>)}
     </div>}
+    {!task.expanded&&!task.done&&task.subtasks.length>0&&(()=>{
+      const next=task.subtasks.find((s,i)=>!task.subtaskDone[i]);
+      if(!next)return null;
+      return<div style={{marginLeft:40,marginTop:2,padding:"3px 8px",background:"#F5F3FF",borderLeft:"2px solid #C4B5FD",borderRadius:"0 4px 4px 0",fontSize:11,color:"#7C3AED",lineHeight:1.4}}>
+        下一步：{next}
+      </div>;
+    })()}
     {isBlockTask&&task.notes&&!task.done&&(()=>{
       const micro=task.notes.match(/📌 今日微任务：(.+)/)?.[1];
       if(!micro)return null;
@@ -5558,9 +5565,7 @@ function App(){
       <div style={{flex:1}}/>
       <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
         <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
-        {/* Routine buttons */}
-        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:darkMode?"#D4B8FF":"#533AB7",cursor:"pointer",fontWeight:500,background:darkMode?"rgba(212,184,255,.08)":"rgba(83,58,183,.05)"}}>▶ 开始 Routine</div>
-        <div onClick={()=>{setShowRoutineManager(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>⚙ Routine管理</div>
+        {null/* Routine入口已移至底部 */}
         {null/* 笔记复习入口已隐藏 */}
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
@@ -5572,6 +5577,7 @@ function App(){
         })()}
         <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
         {null/* 月度回顾入口已隐藏 */}
+        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#7C3AED",cursor:"pointer",fontWeight:500}}>▶ Routine</div>
         <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
       </div>
     </div>
@@ -5638,32 +5644,32 @@ function App(){
                 <button onClick={()=>setFocusNowOnly(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{focusNowOnly?"显示全部 ▾":"只看当前 ▴"}</button>
               </div>
               <div onClick={()=>setDetail(nowT)} style={{fontSize:18,fontWeight:600,color:"#1a1a1a",lineHeight:1.35,cursor:"pointer",marginBottom:6}}>{nowT.title}</div>
-              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:prac?10:12}}>
+              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
                 <span style={{fontSize:12,color:getProj(nowT.project).color}}>{getProj(nowT.project).name}</span>
                 {est>0&&<span style={{fontSize:12,color:"#854F0B"}}>⏱ 你估{fmtDur(est)} · 按你习惯约{fmtDur(real)}</span>}
-                {nowT.subtasks?.length>0&&<span style={{fontSize:12,color:"#185FA5"}}>第一步：{nowT.subtasks.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks[0]}</span>}
               </div>
+              {(()=>{const nextStep=nowT.subtasks?.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks?.[0];return nextStep?(<div style={{background:"rgba(255,255,255,0.7)",borderLeft:"2px solid #5DCAA5",borderRadius:"0 6px 6px 0",padding:"5px 9px",marginBottom:10}}><div style={{fontSize:10,color:"#5DCAA5",fontWeight:500,marginBottom:1}}>下一步</div><div style={{fontSize:12,color:"#0F6E56",lineHeight:1.4}}>{nextStep}</div></div>):null;})()}
               {prac&&<div style={{fontSize:12,color:"#854F0B",background:"rgba(255,255,255,.55)",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55}}>💪 这是你最容易拖的练习类。规则：先做<b>最小版本</b>，2分钟就行——别想着一次做完。开始本身才是难关。</div>}
               {/* 专注计时进度条 */}
               {tm&&<div style={{background:"rgba(255,255,255,.65)",borderRadius:10,padding:"10px 12px",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                   <span style={{fontSize:20,fontWeight:700,color:tm.left===0?"#0F6E56":"#1a1a1a",fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
                   <div style={{display:"flex",gap:6}}>
-                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#fff":"#185FA5",color:tm.running?"#185FA5":"#fff",border:"0.5px solid #B5D4F4",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
-                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#888",border:"0.5px solid #e0ddd6",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
+                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#EAB308":"#7C3AED",color:"#fff",border:"none",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
+                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#7C3AED",border:"0.5px solid #C4B5FD",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
                   </div>
                 </div>
                 <div style={{height:6,background:"rgba(0,0,0,.08)",borderRadius:3,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#0F6E56":"#185FA5",borderRadius:3,transition:"width 1s linear"}}/>
+                  <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#EAB308":"#7C3AED",borderRadius:3,transition:"width 1s linear"}}/>
                 </div>
                 <div style={{fontSize:11,color:"#999",marginTop:4}}>{tm.left===0?"这一段完成了，记一次专注。点上面打卡/完成":"专注 "+Math.round(tm.total/60)+" 分钟 · 已过 "+Math.round((tm.total-tm.left)/60)+" 分"}</div>
               </div>}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#185FA5",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
+                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
                 {needsCheckIn(nowT)
-                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
-                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"11px",background:"#0F6E56",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
-                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#185FA5",border:"0.5px solid #B5D4F4",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"11px",background:"#EAB308",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"11px",background:"#EAB308",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
+                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#7C3AED",border:"0.5px solid #C4B5FD",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
                 {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"11px 14px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:9,fontSize:13,cursor:"pointer"}}>做不动·砍掉</button>}
               </div>
               {rest.length>0&&<div style={{fontSize:11,color:"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
@@ -5694,15 +5700,13 @@ function App(){
           })()}
           {/* Status Cat */}
           <StatusCat tasks={tasks} darkMode={darkMode}/>
-          {/* Routine quick start */}
-          <button onClick={()=>setShowRoutineSelector(true)} style={{width:"100%",padding:"11px 16px",marginBottom:14,background:darkMode?"linear-gradient(135deg,rgba(212,184,255,.2),rgba(168,218,255,.2))":"linear-gradient(135deg,#F5F0FF,#EBF5FF)",border:`1.5px solid ${darkMode?"rgba(212,184,255,.3)":"#D4B8FF"}`,borderRadius:10,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-            <span style={{fontSize:18}}>▶</span>
-            <div style={{flex:1,textAlign:"left"}}>
-              <div style={{fontSize:13,fontWeight:600,color:darkMode?"#D4B8FF":"#533AB7"}}>开始 Routine</div>
-              <div style={{fontSize:11,color:darkMode?"rgba(212,184,255,.6)":"#9B89C4",marginTop:1}}>进入专注流程，任务自动联动</div>
-            </div>
-            <span style={{fontSize:12,color:darkMode?"rgba(212,184,255,.5)":"#bbb"}}>→</span>
-          </button>
+          {/* Routine quick start — compact */}
+          <div style={{display:"flex",alignItems:"center",gap:7,padding:"6px 10px",marginBottom:10,border:"0.5px solid #C4B5FD",borderRadius:8,background:"#F5F3FF",cursor:"pointer"}} onClick={()=>setShowRoutineSelector(true)}>
+            <span style={{fontSize:13,color:"#7C3AED"}}>▶</span>
+            <span style={{fontSize:12,fontWeight:500,color:"#7C3AED",flex:1}}>开始 Routine</span>
+            <span style={{fontSize:10,color:"#A78BFA"}}>专注流程 · 任务联动</span>
+            <span style={{fontSize:11,color:"#C4B5FD"}}>→</span>
+          </div>
           {/* Energy level indicator */}
           {(()=>{const e=getEnergyLabel();return(
             <div style={{background:e.bg,border:"0.5px solid "+e.color+"44",borderRadius:8,padding:"8px 14px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
