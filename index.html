@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🧠 专注板</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/dist/tabler-icons.min.css" />
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -3403,7 +3404,7 @@ function LaunchRitual({tasks,onDismiss,geminiKey,onAddTask}){
         .then(r=>r.json()).then(d=>{
           const code=d?.current_weather?.weathercode;
           const temp=d?.current_weather?.temperature;
-          const icons={0:"ti ti-sun",1:"🌤",2:"⛅",3:"☁️",45:"🌫",51:"🌦",61:"🌧",71:"🌨",80:"🌦",95:"⛈"};
+          const icons={0:"☀️",1:"🌤",2:"⛅",3:"☁️",45:"🌫",51:"🌦",61:"🌧",71:"🌨",80:"🌦",95:"⛈"};
           setWeather((icons[code]||"🌡")+" "+Math.round(temp)+"°C");
         }).catch(()=>{});
     });
@@ -4066,7 +4067,7 @@ function BlockingView({tasks,onUpdate,onAddTask,geminiKey,onSaveLayers}){
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:"#fff",borderRadius:14,width:"100%",maxWidth:440,boxShadow:"0 12px 48px rgba(0,0,0,.2)"}} className="fade-in">
             <div style={{padding:"18px 20px 14px",borderBottom:"0.5px solid #e0ddd6"}}>
-              <div style={{fontSize:15,fontWeight:600}}>ti ti-layout-board 创建Blocking框架</div>
+              <div style={{fontSize:15,fontWeight:600}}>🏗 创建Blocking框架</div>
               <div style={{fontSize:12,color:"#888",marginTop:2}}>强制你先建立全局框架，防止陷入细节</div>
             </div>
             <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
@@ -5612,8 +5613,7 @@ function App(){
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask,onToggleInProgress:toggleInProgress};
-  const navTop=[{id:"today",l:"今日焦点",i:"ti ti-sun"},{id:"all",l:"所有任务",i:"ti ti-list-check"},{id:"calendar",l:"日历",i:"ti ti-calendar"},{id:"blocking",l:"全局框架",i:"ti ti-layout-board"}];
-
+  const navTop=[{id:"today",l:"今日焦点",i:<i className="ti ti-sun"></i>},{id:"all",l:"所有任务",i:<i className="ti ti-list-check"></i>},{id:"calendar",l:"日历",i:<i className="ti ti-calendar"></i>},{id:"blocking",l:"全局框架",i:<i className="ti ti-layout-board"></i>}];
   return<div style={{display:"flex",height:"100vh",background:darkMode?"#1a1728":"#f7f6f3",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
     {!sidebarOpen&&<button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{position:"fixed",top:12,left:12,zIndex:200,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"7px 10px",fontSize:18,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>☰</button>}
@@ -5623,8 +5623,7 @@ function App(){
     <div className={`sidebar-desktop sb-icon-rail ${sidebarOpen?"sidebar-mobile-open":""}`} style={{background:darkMode?"#1e1a30":"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",alignItems:"center",padding:"10px 0",flexShrink:0,overflow:"visible",position:"relative",zIndex:50}}>
       {/* top logo + settings */}
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginBottom:8,paddingBottom:8,borderBottom:"0.5px solid #e0ddd6",width:"100%"}}>
-        <SbItem icon={darkMode?"ti ti-sun":"🌙"} label={darkMode?"浅色模式":"深色模式"} onClick={()=>setDarkMode(d=>!d)}/>
-        <SbItem icon={ghToken?"☁️":"⚙️"} label="同步设置" onClick={()=>setShowSettings(true)} color={ghToken?"#0F6E56":"#bbb"}/>
+        <SbItem icon={<i className={darkMode ? "ti ti-sun" : "ti ti-moon"}></i>} label={darkMode?"浅色模式":"深色模式"} onClick={()=>setDarkMode(d=>!d)}/>
         <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#aaa",marginTop:2}}>✕</button>
       </div>
 
@@ -5638,15 +5637,16 @@ function App(){
 
       {/* bottom tools */}
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,paddingTop:8,borderTop:"0.5px solid #e0ddd6",width:"100%"}}>
-        <SbItem icon="🧠" label="脑倾倒" onClick={()=>setShowBrainDump(true)}/>
+        <SbItem icon={<i className="ti ti-brain"></i>} label="脑倾倒" onClick={()=>setShowBrainDump(true)}/>
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
-          return <SbItem icon="🔨" label={`节点拆解${blockCount>0?` (${blockCount}今日)`:""}`}
+          return <SbItem icon={<i className="ti ti-cut"></i>} label={`节点拆解${blockCount>0?` (${blockCount}今日)`:""}`}
             onClick={()=>setShowBlockBreaker(true)} badge={blockCount>0?blockCount:null}/>;
         })()}
-        <SbItem icon="ti ti-moon" label="结束今天" onClick={()=>setShowMigration(true)}/>
-        <SbItem icon="▶" label="Routine" onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} color="#9B72F0"/>
-        <SbItem icon="ti ti-sparkles" label="AI助手" onClick={()=>setAiOpen(v=>!v)} active={aiOpen}/>
+        <SbItem icon={<i className="ti ti-moon"></i>} label="结束今天" onClick={()=>setShowMigration(true)} color="#0F6E56" />
+        <SbItem icon={<i className="ti ti-player-play"></i>} label="Routine" onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}}/>
+        <SbItem icon={<i className="ti ti-sparkles"></i>} label="AI助手" onClick={()=>setAiOpen(v=>!v)} active={aiOpen}/>
+        <SbItem icon={<i className="ti ti-settings"></i>} label="同步设置" onClick={()=>setShowSettings(true)} color={ghToken?"#0F6E56":"#bbb"}/>
       </div>
     </div>
 
