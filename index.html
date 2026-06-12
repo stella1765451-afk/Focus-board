@@ -56,6 +56,39 @@ body.dark-mode ::-webkit-scrollbar-thumb{background:#3d3560}
 @keyframes star-pop{0%{opacity:0;transform:scale(0) rotate(0)}50%{opacity:1;transform:scale(1.3) rotate(180deg)}100%{opacity:0;transform:scale(0) rotate(360deg)}}
 @keyframes float-up{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-28px)}}
 
+/* ── Icon-only sidebar ── */
+.sb-icon-rail{width:52px!important}
+.sb-nav-item,.sb-tool-item{
+  position:relative;display:flex;align-items:center;justify-content:center;
+  width:36px;height:36px;margin:2px auto;border-radius:9px;cursor:pointer;
+  transition:background .15s;flex-shrink:0;
+}
+.sb-nav-item:hover,.sb-tool-item:hover{background:rgba(0,0,0,.06)}
+.sb-nav-item.active{background:#f0ede8}
+body.dark-mode .sb-nav-item:hover,body.dark-mode .sb-tool-item:hover{background:rgba(255,255,255,.1)}
+body.dark-mode .sb-nav-item.active{background:#2e2a3e}
+/* Tooltip — fixed positioning bypasses overflow:hidden */
+.sb-tip{
+  position:fixed;left:58px;
+  background:#1a1a1a;color:#fff;font-size:12px;white-space:nowrap;
+  padding:4px 9px;border-radius:6px;pointer-events:none;
+  opacity:0;transition:opacity .12s;z-index:9999;
+  top:50%;transform:translateY(-50%);
+}
+.sb-tip::before{
+  content:"";position:absolute;right:100%;top:50%;transform:translateY(-50%);
+  border:5px solid transparent;border-right-color:#1a1a1a;
+}
+/* Use group hover via JS — see SbItem component */
+body.dark-mode .sb-tip{background:#3d3560;color:#f0eaff}
+body.dark-mode .sb-tip::before{border-right-color:#3d3560}
+/* Badge on tool icons */
+.sb-badge{
+  position:absolute;top:2px;right:2px;
+  background:#854F0B;color:#fff;border-radius:8px;
+  font-size:9px;padding:1px 4px;line-height:1.4;
+}
+
 /* ── Routine execution fullscreen ── */
 .routine-fs{position:fixed;inset:0;z-index:700;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .routine-fs.light{background:linear-gradient(135deg,#FFF5FA 0%,#F0F8FF 50%,#F5FFF5 100%)}
@@ -5162,6 +5195,32 @@ function RoutineExecutor({routine,tasks,onComplete,onExit,onTaskDone,darkMode}){
 }
 
 // ══════════════════════════════════════════
+// SbItem — sidebar icon with fixed-position tooltip
+// ══════════════════════════════════════════
+function SbItem({icon,label,onClick,active,badge,color}){
+  const ref=useRef(null);
+  const tipRef=useRef(null);
+  function handleEnter(){
+    if(!ref.current||!tipRef.current)return;
+    const r=ref.current.getBoundingClientRect();
+    tipRef.current.style.top=(r.top+r.height/2)+"px";
+    tipRef.current.style.opacity="1";
+  }
+  function handleLeave(){
+    if(tipRef.current)tipRef.current.style.opacity="0";
+  }
+  return(
+    <div ref={ref} className={`sb-nav-item${active?" active":""}`}
+      onClick={onClick} onMouseEnter={handleEnter} onMouseLeave={handleLeave}
+      style={color?{color}:undefined}>
+      <span style={{fontSize:17,lineHeight:1}}>{icon}</span>
+      {badge?<span className="sb-badge">{badge}</span>:null}
+      <span ref={tipRef} className="sb-tip">{label}</span>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════
 // §APP  主应用 App
 // ══════════════════════════════════════════
 function App(){
@@ -5560,35 +5619,34 @@ function App(){
     {!sidebarOpen&&<button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{position:"fixed",top:12,left:12,zIndex:200,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"7px 10px",fontSize:18,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}>☰</button>}
     {/* sidebar overlay for mobile */}
     {sidebarOpen&&<div className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.3)",zIndex:49}}/>}
-    {/* sidebar */}
-    <div className={`sidebar-desktop ${sidebarOpen?"sidebar-mobile-open":""}`} style={{width:190,background:"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto",position:"relative",zIndex:50}}>
-      <div style={{padding:"0 16px 16px",fontSize:15,fontWeight:600,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <span>🧠 专注板</span>
-        <div style={{display:"flex",gap:4}}>
-          <button onClick={()=>setDarkMode(d=>!d)} title={darkMode?"浅色模式":"深色模式"} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:darkMode?"#D4B8FF":"#aaa"}}>{darkMode?"☀️":"🌙"}</button>
-          <button onClick={()=>setShowSettings(true)} title="同步设置" style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:ghToken?"#0F6E56":"#bbb"}}>{ghToken?"☁️":"⚙️"}</button>
-          <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#aaa"}}>✕</button>
-        </div>
+    {/* sidebar — icon-only rail */}
+    <div className={`sidebar-desktop sb-icon-rail ${sidebarOpen?"sidebar-mobile-open":""}`} style={{background:darkMode?"#1e1a30":"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",alignItems:"center",padding:"10px 0",flexShrink:0,overflow:"visible",position:"relative",zIndex:50}}>
+      {/* top logo + settings */}
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginBottom:8,paddingBottom:8,borderBottom:"0.5px solid #e0ddd6",width:"100%"}}>
+        <SbItem icon={darkMode?"☀️":"🌙"} label={darkMode?"浅色模式":"深色模式"} onClick={()=>setDarkMode(d=>!d)}/>
+        <SbItem icon={ghToken?"☁️":"⚙️"} label="同步设置" onClick={()=>setShowSettings(true)} color={ghToken?"#0F6E56":"#bbb"}/>
+        <button className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#aaa",marginTop:2}}>✕</button>
       </div>
-      {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id&&!projView?"#1a1a1a":"#666",fontWeight:view===n.id&&!projView?500:400,background:view===n.id&&!projView?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
-      {null/* 项目分类入口已隐藏 */}
+
+      {/* nav items */}
+      {navTop.map(n=>(
+        <SbItem key={n.id} icon={n.i} label={n.l} active={view===n.id&&!projView}
+          onClick={()=>{setView(n.id);setProjView(null);setSidebarOpen(false);}}/>
+      ))}
+
       <div style={{flex:1}}/>
-      <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
-        <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
-        {null/* Routine入口已移至底部 */}
-        {null/* 笔记复习入口已隐藏 */}
+
+      {/* bottom tools */}
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,paddingTop:8,borderTop:"0.5px solid #e0ddd6",width:"100%"}}>
+        <SbItem icon="🧠" label="脑倾倒" onClick={()=>setShowBrainDump(true)}/>
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
-          return(
-            <div onClick={()=>setShowBlockBreaker(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:blockCount>0?"#854F0B":"#666",cursor:"pointer",fontWeight:blockCount>0?500:400}}>
-              🔨 节点拆解{blockCount>0&&<span style={{fontSize:11,background:"#854F0B",color:"#fff",borderRadius:10,padding:"1px 6px",marginLeft:4}}>{blockCount}今日</span>}
-            </div>
-          );
+          return <SbItem icon="🔨" label={`节点拆解${blockCount>0?` (${blockCount}今日)`:""}`}
+            onClick={()=>setShowBlockBreaker(true)} badge={blockCount>0?blockCount:null}/>;
         })()}
-        <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
-        {null/* 月度回顾入口已隐藏 */}
-        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#9B72F0",cursor:"pointer",fontWeight:500}}>▶ Routine</div>
-        <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
+        <SbItem icon="🌙" label="结束今天" onClick={()=>setShowMigration(true)}/>
+        <SbItem icon="▶" label="Routine" onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} color="#9B72F0"/>
+        <SbItem icon="✨" label="AI助手" onClick={()=>setAiOpen(v=>!v)} active={aiOpen}/>
       </div>
     </div>
 
