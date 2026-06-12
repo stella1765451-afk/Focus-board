@@ -598,8 +598,8 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
         {needCI&&!task.done&&onCheckIn&&(
           <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
         )}
-        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#7C3AED",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
-        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#7C3AED",background:"#F5F3FF",border:"0.5px solid #C4B5FD",borderRadius:4,cursor:"pointer",padding:"1px 6px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
+        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#9B72F0",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
+        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#9B72F0",background:"#FAF5FF",border:"0.5px solid #C4B5FD",borderRadius:4,cursor:"pointer",padding:"1px 6px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
       </div>
     </div>
     {task.expanded&&task.subtasks.length>0&&<div style={{paddingLeft:40,marginTop:3,display:"flex",flexDirection:"column",gap:3}}>
@@ -611,7 +611,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
     {!task.expanded&&!task.done&&task.subtasks.length>0&&(()=>{
       const next=task.subtasks.find((s,i)=>!task.subtaskDone[i]);
       if(!next)return null;
-      return<div style={{marginLeft:40,marginTop:2,padding:"3px 8px",background:"#F5F3FF",borderLeft:"2px solid #C4B5FD",borderRadius:"0 4px 4px 0",fontSize:11,color:"#7C3AED",lineHeight:1.4}}>
+      return<div style={{marginLeft:40,marginTop:2,padding:"3px 8px",background:"#FAF5FF",borderLeft:"2px solid #C4B5FD",borderRadius:"0 4px 4px 0",fontSize:11,color:"#9B72F0",lineHeight:1.4}}>
         下一步：{next}
       </div>;
     })()}
@@ -4477,25 +4477,35 @@ function getTotalEstimate(tasks){
 // Called once on mount to inject PWA meta tags
 function injectPWA(){
   if(document.getElementById("pwa-manifest"))return;
+  // SVG icon as data URI — works without external files
+  const svgIcon=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="40" fill="#f7f6f3"/><rect x="32" y="48" width="128" height="16" rx="8" fill="#9B72F0"/><rect x="32" y="80" width="96" height="12" rx="6" fill="#FBBF24"/><rect x="32" y="108" width="112" height="12" rx="6" fill="#e0ddd6"/><rect x="32" y="132" width="80" height="12" rx="6" fill="#e0ddd6"/><circle cx="152" cy="144" r="24" fill="#9B72F0"/><path d="M144 144l6 6 10-12" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+  const iconUrl="data:image/svg+xml;base64,"+btoa(unescape(encodeURIComponent(svgIcon)));
+  const startUrl=location.href.split("?")[0].split("#")[0];
   const manifest={
     name:"专注板",short_name:"专注板",
-    start_url:".",display:"standalone",
-    background_color:"#f7f6f3",theme_color:"#1a1a1a",
-    icons:[{src:"https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f9e0.png",sizes:"72x72",type:"image/png"}]
+    start_url:startUrl,
+    display:"standalone",
+    background_color:"#f7f6f3",theme_color:"#f7f6f3",
+    orientation:"portrait",
+    icons:[
+      {src:iconUrl,sizes:"192x192",type:"image/svg+xml",purpose:"any maskable"},
+      {src:iconUrl,sizes:"512x512",type:"image/svg+xml",purpose:"any maskable"}
+    ]
   };
   const blob=new Blob([JSON.stringify(manifest)],{type:"application/json"});
   const url=URL.createObjectURL(blob);
   const link=document.createElement("link");
   link.id="pwa-manifest";link.rel="manifest";link.href=url;
   document.head.appendChild(link);
-  // Theme color
   const meta=document.createElement("meta");
-  meta.name="theme-color";meta.content="#1a1a1a";
+  meta.name="theme-color";meta.content="#f7f6f3";
   document.head.appendChild(meta);
-  // Apple
   const apple=document.createElement("meta");
   apple.name="apple-mobile-web-app-capable";apple.content="yes";
   document.head.appendChild(apple);
+  const appleTitle=document.createElement("meta");
+  appleTitle.name="apple-mobile-web-app-title";appleTitle.content="专注板";
+  document.head.appendChild(appleTitle);
 }
 
 // ═══════════════════════════════════════════
@@ -5577,7 +5587,7 @@ function App(){
         })()}
         <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
         {null/* 月度回顾入口已隐藏 */}
-        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#7C3AED",cursor:"pointer",fontWeight:500}}>▶ Routine</div>
+        <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#9B72F0",cursor:"pointer",fontWeight:500}}>▶ Routine</div>
         <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
       </div>
     </div>
@@ -5655,21 +5665,21 @@ function App(){
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                   <span style={{fontSize:20,fontWeight:700,color:tm.left===0?"#0F6E56":"#1a1a1a",fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
                   <div style={{display:"flex",gap:6}}>
-                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#EAB308":"#7C3AED",color:"#fff",border:"none",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
-                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#7C3AED",border:"0.5px solid #C4B5FD",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
+                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#FBBF24":"#9B72F0",color:"#fff",border:"none",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
+                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#9B72F0",border:"0.5px solid #C4B5FD",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
                   </div>
                 </div>
                 <div style={{height:6,background:"rgba(0,0,0,.08)",borderRadius:3,overflow:"hidden"}}>
-                  <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#EAB308":"#7C3AED",borderRadius:3,transition:"width 1s linear"}}/>
+                  <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#FBBF24":"#9B72F0",borderRadius:3,transition:"width 1s linear"}}/>
                 </div>
                 <div style={{fontSize:11,color:"#999",marginTop:4}}>{tm.left===0?"这一段完成了，记一次专注。点上面打卡/完成":"专注 "+Math.round(tm.total/60)+" 分钟 · 已过 "+Math.round((tm.total-tm.left)/60)+" 分"}</div>
               </div>}
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#7C3AED",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
+                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"11px",background:"#9B72F0",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
                 {needsCheckIn(nowT)
-                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"11px",background:"#EAB308",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
-                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"11px",background:"#EAB308",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
-                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#7C3AED",border:"0.5px solid #C4B5FD",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"11px",background:"#FBBF24",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>做完了 · 打卡</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"11px",background:"#FBBF24",color:"#fff",border:"none",borderRadius:9,fontSize:14,fontWeight:600,cursor:"pointer"}}>✓ 做完了</button>}
+                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"11px 14px",background:"#fff",color:"#9B72F0",border:"0.5px solid #C4B5FD",borderRadius:9,fontSize:13,cursor:"pointer"}}>拆成小步</button>}
                 {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"11px 14px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:9,fontSize:13,cursor:"pointer"}}>做不动·砍掉</button>}
               </div>
               {rest.length>0&&<div style={{fontSize:11,color:"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
@@ -5701,11 +5711,11 @@ function App(){
           {/* Status Cat */}
           <StatusCat tasks={tasks} darkMode={darkMode}/>
           {/* Routine quick start — compact */}
-          <div style={{display:"flex",alignItems:"center",gap:7,padding:"6px 10px",marginBottom:10,border:"0.5px solid #C4B5FD",borderRadius:8,background:"#F5F3FF",cursor:"pointer"}} onClick={()=>setShowRoutineSelector(true)}>
-            <span style={{fontSize:13,color:"#7C3AED"}}>▶</span>
-            <span style={{fontSize:12,fontWeight:500,color:"#7C3AED",flex:1}}>开始 Routine</span>
-            <span style={{fontSize:10,color:"#A78BFA"}}>专注流程 · 任务联动</span>
-            <span style={{fontSize:11,color:"#C4B5FD"}}>→</span>
+          <div style={{display:"flex",alignItems:"center",gap:7,padding:"6px 10px",marginBottom:10,border:"0.5px solid #C4B5FD",borderRadius:8,background:"#FAF5FF",cursor:"pointer"}} onClick={()=>setShowRoutineSelector(true)}>
+            <span style={{fontSize:13,color:"#9B72F0"}}>▶</span>
+            <span style={{fontSize:12,fontWeight:500,color:"#9B72F0",flex:1}}>开始 Routine</span>
+            <span style={{fontSize:10,color:"#C4B5FD"}}>专注流程 · 任务联动</span>
+            <span style={{fontSize:11,color:"#DDD6FE"}}>→</span>
           </div>
           {/* Energy level indicator */}
           {(()=>{const e=getEnergyLabel();return(
