@@ -87,7 +87,7 @@ const BULLET_TYPES=[
   {sym:"×",label:"已取消",color:"#A32D2D"},
 ];
 const MONTHS=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
-const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false,isPractice:false,requireCheckIn:false};
+const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false,isPractice:false,requireCheckIn:false,inProgress:false};
 
 /* ═══════════════════════════════════════════
    DATE HELPERS
@@ -131,6 +131,9 @@ function fmtDur(mins){if(!mins)return"";return mins>=60?(mins%60?Math.floor(mins
 function coachOrder(list){
   const prW={urgent:0,today:1,normal:2};
   return[...list].sort((a,b)=>{
+    // 进行中优先级最高
+    if(a.inProgress&&!b.inProgress)return -1;
+    if(!a.inProgress&&b.inProgress)return 1;
     const ap=isPracticeTask(a)?0:1,bp=isPracticeTask(b)?0:1;
     if(ap!==bp)return ap-bp;
     const ao=isOverdue(a.due)?0:1,bo=isOverdue(b.due)?0:1;
@@ -543,7 +546,7 @@ function SyncBadge({status,hasToken}){
 /* ═══════════════════════════════════════════
    TASK ROW
 ═══════════════════════════════════════════ */
-function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
+function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onToggleInProgress}){
   const p=getProj(task.project);
   const ov=isOverdue(task.due)&&!task.done;
   const stale=task.migrateCount>=3;
@@ -553,23 +556,27 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
   const hasCheckIn=task.checkInOutput||task.checkInDate;
   const prac=isPracticeTask(task);
   const needCI=needsCheckIn(task);
+  const inProg=task.inProgress&&!task.done;
 
   // Urgency border color
   let borderColor="#e0ddd6";
   let bgColor="#fff";
-  if(ov){borderColor="#f5a8a8";bgColor="#FFFAFA";}
+  if(inProg){borderColor="#1D9E75";bgColor="#F0FAF5";}
+  else if(ov){borderColor="#f5a8a8";bgColor="#FFFAFA";}
   else if(dueToday){borderColor="#f0c070";bgColor="#FFFDF5";}
   else if(stale){borderColor="#f0b8b8";}
   else if(task.priority==="urgent"&&!task.done){borderColor="#e8b4b4";}
 
   return<div style={{marginBottom:5}} className="fade-in">
     <div style={{background:bgColor,border:"0.5px solid "+borderColor,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1,
-      outline:ov&&!task.done?"2px solid rgba(163,45,45,.15)":"none",outlineOffset:1}}>
+      outline:inProg?"2px solid rgba(29,158,117,.2)":ov&&!task.done?"2px solid rgba(163,45,45,.15)":"none",outlineOffset:1,
+      borderLeft:inProg?"3px solid #1D9E75":"0.5px solid "+borderColor}}>
       <Check checked={task.done} onClick={()=>onToggle(task.id)}/>
       <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onOpen(task)}>
-        <div style={{fontSize:14,color:task.done?"#aaa":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{task.title}</div>
+        <div style={{fontSize:14,color:task.done?"#aaa":inProg?"#0F6E56":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:inProg?500:400}}>{task.title}</div>
         <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:p.color}}>{p.name}</span>
+          {inProg&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4,fontWeight:600}}>▶ 进行中</span>}
           {needCI&&!task.done&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"1px 6px",borderRadius:4,fontWeight:600}}>需打卡</span>}
           {prac&&!task.done&&<span style={{fontSize:11,color:"#A32D2D",background:"#FCEBEB",padding:"1px 6px",borderRadius:4}}>练习·易拖</span>}
           {hasCheckIn&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4}}>✓ 已打卡</span>}
@@ -582,6 +589,12 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn}){
         {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:ov?"#FCEBEB":dueToday?"#FAEEDA":"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
         <MigrateTag count={task.migrateCount}/>
+        {!task.done&&onToggleInProgress&&(
+          <button onClick={e=>{e.stopPropagation();onToggleInProgress(task.id);}} title={inProg?"停止进行中":"标记为进行中"}
+            style={{fontSize:11,color:inProg?"#0F6E56":"#888",background:inProg?"#E1F5EE":"none",border:inProg?"0.5px solid #9FE1CB":"0.5px solid #e0ddd6",borderRadius:5,padding:"2px 7px",cursor:"pointer",fontWeight:inProg?600:400}}>
+            {inProg?"■ 暂停":"▶"}
+          </button>
+        )}
         {needCI&&!task.done&&onCheckIn&&(
           <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
         )}
@@ -5343,6 +5356,10 @@ function App(){
       return next;
     });
   }
+  function toggleInProgress(id){
+    // 同时只能有一个任务进行中，切换时清除其他所有
+    setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,inProgress:!t.inProgress}:{...t,inProgress:false}));
+  }
   function toggleSub(tid,i){
     setTasksAndSync(ts=>ts.map(t=>{if(t.id!==tid)return t;const sd=[...t.subtaskDone];sd[i]=!sd[i];return{...t,subtaskDone:sd};}));
     // 子步骤全部完成时同步 episode 为 done
@@ -5518,7 +5535,7 @@ function App(){
   const focus=tasks.filter(t=>!t.done&&(t.priority==="urgent"||t.priority==="today"||isOverdue(t.due))).slice(0,3);
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
-  const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask};
+  const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask,onToggleInProgress:toggleInProgress};
   const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"blocking",l:"全局框架",i:"🏗"}];
 
   return<div style={{display:"flex",height:"100vh",background:darkMode?"#1a1728":"#f7f6f3",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
@@ -5607,14 +5624,17 @@ function App(){
             const nowT=fo[0];if(!nowT)return null;
             const rest=fo.slice(1);
             const prac=isPracticeTask(nowT);
+            const inProg=nowT.inProgress;
             const est=parseInt(nowT.estimate||"0")||0;
             const real=realisticEstimate(est);
             const tm=timer&&timer.taskId===nowT.id?timer:null;
             const mmss=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(Math.max(0,s%60)).padStart(2,"0");
             const pct=tm?Math.round((1-tm.left/tm.total)*100):0;
-            return<div style={{background:prac?"linear-gradient(135deg,#FFF5E0,#FAEEDA)":"linear-gradient(135deg,#EBF3FB,#E6F1FB)",border:`1.5px solid ${prac?"#f0c070":"#B5D4F4"}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+            const cardBg=inProg?"linear-gradient(135deg,#E8FAF3,#D4F5E8)":prac?"linear-gradient(135deg,#FFF5E0,#FAEEDA)":"linear-gradient(135deg,#EBF3FB,#E6F1FB)";
+            const cardBorder=inProg?"#5DCAA5":prac?"#f0c070":"#B5D4F4";
+            return<div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:prac?"#854F0B":"#185FA5"}}>🎯 现在就做这一件</span>
+                <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:inProg?"#0F6E56":prac?"#854F0B":"#185FA5"}}>{inProg?"▶ 进行中":"🎯 现在就做这一件"}</span>
                 <button onClick={()=>setFocusNowOnly(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{focusNowOnly?"显示全部 ▾":"只看当前 ▴"}</button>
               </div>
               <div onClick={()=>setDetail(nowT)} style={{fontSize:18,fontWeight:600,color:"#1a1a1a",lineHeight:1.35,cursor:"pointer",marginBottom:6}}>{nowT.title}</div>
@@ -5704,8 +5724,7 @@ function App(){
             </div>
           ):null;})()}
           {null/* 习惯追踪已隐藏 */}
-          {/* Pomodoro stats */}
-          {pomLog.length>0&&<PomodoroStats log={pomLog}/>}
+          {null/* 番茄统计已删除 */}
           {!focusNowOnly&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 按顺序做（前面先做）</span>
