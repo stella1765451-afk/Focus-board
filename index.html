@@ -5519,7 +5519,7 @@ function App(){
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask};
-  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"weekly",l:"本周计划",i:"📆"},{id:"calendar",l:"日历",i:"📅"},{id:"future",l:"未来清单",i:"🔭"},{id:"learning",l:"学习",i:"📚"},{id:"projects",l:"项目",i:"📁"},{id:"blocking",l:"全局框架",i:"🏗"}];
+  const navTop=[{id:"today",l:"今日焦点",i:"☀️"},{id:"all",l:"所有任务",i:"📋"},{id:"calendar",l:"日历",i:"📅"},{id:"blocking",l:"全局框架",i:"🏗"}];
 
   return<div style={{display:"flex",height:"100vh",background:darkMode?"#1a1728":"#f7f6f3",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
@@ -5537,27 +5537,14 @@ function App(){
         </div>
       </div>
       {navTop.map(n=><div key={n.id} onClick={()=>{setView(n.id);setProjView(null);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:view===n.id&&!projView?"#1a1a1a":"#666",fontWeight:view===n.id&&!projView?500:400,background:view===n.id&&!projView?"#f0ede8":"transparent",cursor:"pointer"}}>{n.i} {n.l}</div>)}
-      <div style={{fontSize:11,color:"#bbb",padding:"14px 16px 4px",textTransform:"uppercase",letterSpacing:".06em"}}>项目</div>
-      {PROJECTS.map(p=><div key={p.id} onClick={()=>{setView("projects");setProjView(p);}} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 16px",fontSize:13,color:projView?.id===p.id?"#1a1a1a":"#666",background:projView?.id===p.id?"#f0ede8":"transparent",cursor:"pointer"}}>
-        <span style={{width:8,height:8,borderRadius:"50%",background:p.color,flexShrink:0}}/>{p.name}
-      </div>)}
+      {null/* 项目分类入口已隐藏 */}
       <div style={{flex:1}}/>
       <div style={{borderTop:"0.5px solid #e0ddd6",padding:"8px 0"}}>
         <div onClick={()=>setShowBrainDump(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🧠 脑倾倒</div>
         {/* Routine buttons */}
         <div onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:darkMode?"#D4B8FF":"#533AB7",cursor:"pointer",fontWeight:500,background:darkMode?"rgba(212,184,255,.08)":"rgba(83,58,183,.05)"}}>▶ 开始 Routine</div>
         <div onClick={()=>{setShowRoutineManager(true);setSidebarOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>⚙ Routine管理</div>
-        {(()=>{
-          const today=todayStr();
-          const dueCount=courses.reduce((sum,c)=>{
-            return sum+(c.notes||[]).filter(n=>n.aiSummary&&(!n.nextReview||n.nextReview<=today)).length;
-          },0);
-          return(
-            <div onClick={()=>setShowReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:dueCount>0?"#185FA5":"#666",cursor:"pointer"}}>
-              🔁 笔记复习{dueCount>0&&<span style={{fontSize:11,background:"#185FA5",color:"#fff",borderRadius:10,padding:"1px 6px",marginLeft:4}}>{dueCount}</span>}
-            </div>
-          );
-        })()}
+        {null/* 笔记复习入口已隐藏 */}
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
           return(
@@ -5567,7 +5554,7 @@ function App(){
           );
         })()}
         <div onClick={()=>setShowMigration(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>🌙 结束今天</div>
-        <div onClick={()=>setShowMonthlyReview(true)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#666",cursor:"pointer"}}>📅 月度回顾</div>
+        {null/* 月度回顾入口已隐藏 */}
         <div onClick={()=>setAiOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 16px",fontSize:13,color:"#185FA5",cursor:"pointer",background:aiOpen?"#EBF3FB":"transparent"}}>✨ AI助手</div>
       </div>
     </div>
@@ -5716,8 +5703,7 @@ function App(){
               ⏱ 你估了约{fmtDur(total)}，但你几乎总是低估——按 {fmtDur(real)} 来安排今天
             </div>
           ):null;})()}
-          {/* Habit tracker */}
-          <HabitTracker habits={habits} onUpdateHabits={updateHabits}/>
+          {null/* 习惯追踪已隐藏 */}
           {/* Pomodoro stats */}
           {pomLog.length>0&&<PomodoroStats log={pomLog}/>}
           {!focusNowOnly&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
