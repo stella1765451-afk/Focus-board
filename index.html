@@ -29,12 +29,16 @@ input:focus,select:focus,textarea:focus{outline:2px solid #185FA5;outline-offset
 textarea{resize:vertical}
 .fade-in{animation:fadeIn .2s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.task-completing{animation:taskComplete .35s ease forwards}
+@keyframes taskComplete{0%{opacity:1;transform:scale(1)}40%{opacity:.9;transform:scale(1.02) translateX(4px)}100%{opacity:0;transform:scale(.97) translateX(8px)}}
 .pulse{animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
 /* ── Dark mode ── */
 body.dark-mode{background:#1a1728;color:#f0eaff}
 body.dark-mode input,body.dark-mode select,body.dark-mode textarea{background:#2a2440;color:#f0eaff;border-color:#3d3560!important}
+body.dark-mode .task-card{background:#242038!important;border-color:#3d3560!important;color:#f0eaff!important}
+body.dark-mode .task-card-done{background:#1e1b30!important;border-color:#2e2a48!important;color:#9090a8!important}
 body.dark-mode ::-webkit-scrollbar-thumb{background:#3d3560}
 
 /* ── Candy theme variables ── */
@@ -557,7 +561,7 @@ function Check({checked,onClick,size=18}){
 }
 function Tag({type}){
   if(!type||type==="normal")return null;
-  const S={urgent:{bg:"#FCEBEB",c:"#A32D2D",l:"紧急"},today:{bg:"#FAEEDA",c:"#854F0B",l:"今天"}};
+  const S={urgent:{bg:"#EBF3FB",c:"#185FA5",l:"紧急"},today:{bg:"#f0ede8",c:"#666",l:"今天"}};
   const s=S[type];
   if(!s)return null;
   return<span style={{fontSize:11,padding:"2px 8px",borderRadius:6,background:s.bg,color:s.c,whiteSpace:"nowrap"}}>{s.l}</span>;
@@ -565,7 +569,7 @@ function Tag({type}){
 function MigrateTag({count}){
   if(!count)return null;
   const color=count>=3?"#A32D2D":count>=2?"#854F0B":"#aaa";
-  return<span title={`已迁移${count}次`} style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:count>=3?"#FCEBEB":count>=2?"#FAEEDA":"#f0ede8",color,whiteSpace:"nowrap"}}>迁移×{count}</span>;
+  return<span title={`已迁移${count}次`} style={{fontSize:10,padding:"1px 6px",borderRadius:10,background:"#f0ede8",color:"#888",whiteSpace:"nowrap"}}>迁移×{count}</span>;
 }
 function SyncBadge({status,hasToken}){
   const S={
@@ -582,9 +586,18 @@ function SyncBadge({status,hasToken}){
 /* ═══════════════════════════════════════════
    TASK ROW
 ═══════════════════════════════════════════ */
-function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onToggleInProgress,onDragStart,onDragOver,onDrop,isDragOver}){
+function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onToggleInProgress,onDragStart,onDragOver,onDrop,isDragOver,slim,completing,onTouchStartDrag,onTouchMoveDrag,onTouchEndDrag}){
   const [hovered,setHovered]=useState(false);
   const p=getProj(task.project);
+  // slim模式：已完成任务精简展示
+  if(slim&&task.done) return(
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,opacity:0.55}}
+      onClick={()=>onOpen(task)}>
+      <Check checked size={14} onClick={e=>{e.stopPropagation();onToggle(task.id);}}/>
+      <span style={{fontSize:13,color:"#888",textDecoration:"line-through",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{task.title}</span>
+      <span style={{fontSize:11,color:p.color,flexShrink:0}}>{p.name}</span>
+    </div>
+  );
   const ov=isOverdue(task.due)&&!task.done;
   const stale=task.migrateCount>=3;
   const dueToday=task.due===todayStr()&&!task.done;
@@ -595,33 +608,38 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
   const needCI=needsCheckIn(task);
   const inProg=task.inProgress&&!task.done;
 
-  // Urgency border color
+  // Urgency border color — dm = we don't have darkMode here, use CSS variable trick
   let borderColor="#e0ddd6";
   let bgColor="#fff";
-  if(inProg){borderColor="#1D9E75";bgColor="#F0FAF5";}
-  else if(ov){borderColor="#f5a8a8";bgColor="#FFFAFA";}
-  else if(dueToday){borderColor="#f0c070";bgColor="#FFFDF5";}
-  else if(stale){borderColor="#f0b8b8";}
-  else if(task.priority==="urgent"&&!task.done){borderColor="#e8b4b4";}
+  if(inProg){borderColor="#1D9E75";bgColor="#F5FFFE";}
+  else if(ov){borderColor="#c8c8c8";bgColor="#fff";}       // 逾期：灰色描边
+  else if(dueToday){borderColor="#185FA5";bgColor="#fff";} // 今天截止：蓝色描边
+  else if(stale){borderColor="#bbb";}
+  else if(task.priority==="urgent"&&!task.done){borderColor="#185FA5";}  // 紧急：蓝色描边
 
-  return<div style={{marginBottom:5,opacity:isDragOver?0.5:1,transition:"opacity .15s"}} className="fade-in"
+  return<div style={{marginBottom:5,opacity:isDragOver?0.5:1,transition:"opacity .15s",touchAction:onDragStart?"none":"auto"}}
+    data-taskid={task.id}
+    className={`fade-in${completing?" task-completing":""}`}
     draggable={!!onDragStart}
     onDragStart={e=>{if(onDragStart)onDragStart(e,task.id);}}
     onDragOver={e=>{e.preventDefault();if(onDragOver)onDragOver(e,task.id);}}
     onDrop={e=>{e.preventDefault();if(onDrop)onDrop(e,task.id);}}
+    onTouchStart={e=>{if(onTouchStartDrag)onTouchStartDrag(e,task.id);}}
+    onTouchMove={e=>{if(onTouchMoveDrag)onTouchMoveDrag(e);}}
+    onTouchEnd={e=>{if(onTouchEndDrag)onTouchEndDrag(e);}}
     onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)}>
-    <div style={{background:bgColor,border:"0.5px solid "+borderColor,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1,
+    <div className={task.done?"task-card task-card-done":"task-card"} style={{background:bgColor,border:"0.5px solid "+borderColor,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"center",gap:10,opacity:task.done?.5:1,
       outline:inProg?"2px solid rgba(29,158,117,.2)":ov&&!task.done?"2px solid rgba(163,45,45,.15)":"none",outlineOffset:1,
       borderLeft:inProg?"3px solid #1D9E75":"0.5px solid "+borderColor,
       boxShadow:task.done?"none":"0 1px 3px rgba(0,0,0,0.04)"}}>
       <Check checked={task.done} onClick={()=>onToggle(task.id)}/>
       <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onOpen(task)}>
-        <div style={{fontSize:14,color:task.done?"#aaa":inProg?"#0F6E56":"#1a1a1a",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:inProg?500:400}}>{task.title}</div>
+        <div style={{fontSize:14,color:task.done?"#888":inProg?"#0F6E56":"inherit",textDecoration:task.done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:inProg?500:400}}>{task.title}</div>
         <div style={{display:"flex",gap:8,marginTop:2,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:11,color:p.color}}>{p.name}</span>
           {inProg&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4,fontWeight:600}}>▶ 进行中</span>}
-          {needCI&&!task.done&&<span style={{fontSize:11,color:"#854F0B",background:"#FAEEDA",padding:"1px 6px",borderRadius:4,fontWeight:600}}>需打卡</span>}
-          {prac&&!task.done&&<span style={{fontSize:11,color:"#A32D2D",background:"#FCEBEB",padding:"1px 6px",borderRadius:4}}>练习·易拖</span>}
+          {needCI&&!task.done&&<span style={{fontSize:11,color:"#185FA5",background:"#EBF3FB",padding:"1px 6px",borderRadius:4,fontWeight:500}}>需打卡</span>}
+          {prac&&!task.done&&<span style={{fontSize:11,color:"#888",background:"#f0ede8",padding:"1px 6px",borderRadius:4}}>练习</span>}
           {hasCheckIn&&<span style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",padding:"1px 6px",borderRadius:4}}>✓ 已打卡</span>}
           {task.notes&&<span style={{fontSize:11,color:"#bbb"}}>📝</span>}
           {task.attachments?.length>0&&<span style={{fontSize:11,color:"#bbb"}}>📎{task.attachments.length}</span>}
@@ -629,24 +647,31 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
-        {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:ov?"#FCEBEB":dueToday?"#FAEEDA":"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
+        {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
         <MigrateTag count={task.migrateCount}/>
-        {!task.done&&onToggleInProgress&&(
-          <button onClick={e=>{e.stopPropagation();onToggleInProgress(task.id);}} title={inProg?"停止进行中":"标记为进行中"}
-            style={{fontSize:11,color:inProg?"#0F6E56":"#888",background:inProg?"#E1F5EE":"none",border:inProg?"0.5px solid #9FE1CB":"0.5px solid #e0ddd6",borderRadius:5,padding:"2px 7px",cursor:"pointer",fontWeight:inProg?600:400}}>
-            {inProg?"■ 暂停":"▶"}
+        {/* 操作按钮：进行中时常驻；否则 hover 才显示 */}
+        {!task.done&&onToggleInProgress&&inProg&&(
+          <button onClick={e=>{e.stopPropagation();onToggleInProgress(task.id);}}
+            style={{fontSize:11,color:"#0F6E56",background:"#E1F5EE",border:"0.5px solid #9FE1CB",borderRadius:5,padding:"2px 7px",cursor:"pointer",fontWeight:600}}>
+            ■ 暂停
+          </button>
+        )}
+        {!task.done&&onToggleInProgress&&!inProg&&hovered&&(
+          <button onClick={e=>{e.stopPropagation();onToggleInProgress(task.id);}}
+            style={{fontSize:11,color:"#888",background:"none",border:"0.5px solid #e0ddd6",borderRadius:5,padding:"2px 7px",cursor:"pointer"}}>
+            ▶
           </button>
         )}
         {needCI&&!task.done&&onCheckIn&&(
-          <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#854F0B",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
+          <button onClick={e=>{e.stopPropagation();onCheckIn(task);}} style={{fontSize:11,color:"#fff",background:"#185FA5",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>打卡↗</button>
         )}
-        {!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
-        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#185FA5",background:"#EBF3FB",border:"0.5px solid #B5D4F4",borderRadius:4,cursor:"pointer",padding:"1px 6px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
+        {hovered&&!task.done&&!task.subtasks.length&&!isBlockTask&&<button onClick={()=>onAI(task.id)} style={{fontSize:11,color:"#185FA5",background:"none",border:"none",cursor:"pointer",padding:"2px 5px"}}>拆解↗</button>}
+        {task.subtasks.length>0&&<button onClick={()=>onExpand(task.id)} style={{fontSize:11,color:"#555",background:"#f0ede8",border:"0.5px solid #e0ddd6",borderRadius:4,cursor:"pointer",padding:"1px 6px"}}>{task.expanded?"▲":"▼"}{task.subtasks.length}步</button>}
       </div>
     </div>
     {task.expanded&&task.subtasks.length>0&&<div style={{paddingLeft:40,marginTop:3,display:"flex",flexDirection:"column",gap:3}}>
-      {task.subtasks.map((s,i)=><div key={i} onClick={()=>onToggleSub(task.id,i)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:6,fontSize:13,color:task.subtaskDone[i]?"#aaa":"#555",background:"#f7f6f3",cursor:"pointer",textDecoration:task.subtaskDone[i]?"line-through":"none"}}>
+      {task.subtasks.map((s,i)=><div key={i} onClick={()=>onToggleSub(task.id,i)} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:6,fontSize:13,color:task.subtaskDone[i]?"#bbb":"#444",background:task.subtaskDone[i]?"#fafafa":"#f4f4f4",cursor:"pointer",textDecoration:task.subtaskDone[i]?"line-through":"none"}}>
         <Check checked={task.subtaskDone[i]} size={14} onClick={e=>{e.stopPropagation();onToggleSub(task.id,i);}}/>
         {s}
       </div>)}
@@ -661,7 +686,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
     {isBlockTask&&task.notes&&!task.done&&(()=>{
       const micro=task.notes.match(/📌 今日微任务：(.+)/)?.[1];
       if(!micro)return null;
-      return<div style={{marginLeft:40,marginTop:3,padding:"6px 10px",background:"#FAEEDA",borderRadius:6,fontSize:12,color:"#854F0B",borderLeft:"3px solid #854F0B"}}>
+      return<div style={{marginLeft:40,marginTop:3,padding:"6px 10px",background:"#EBF3FB",borderRadius:6,fontSize:12,color:"#185FA5",borderLeft:"2px solid #185FA5"}}>
         今天做：{micro}
       </div>;
     })()}
@@ -4779,7 +4804,7 @@ function StatusCat({tasks,darkMode,compact}){
         <PixelCat state={state} size={2} darkMode={darkMode}/>
         <span style={{fontSize:12,color:color,fontWeight:500}}>{label}</span>
         {total>0&&(
-          <div style={{flex:1,height:3,background:"#f0ede8",borderRadius:2,overflow:"hidden",maxWidth:80}}>
+          <div style={{flex:1,height:3,background:darkMode?"rgba(255,255,255,.1)":"#f0ede8",borderRadius:2,overflow:"hidden",maxWidth:80}}>
             <div style={{height:"100%",width:`${ratio*100}%`,background:ratio>=1?"#0F6E56":ratio>0.5?"#185FA5":"#854F0B",borderRadius:2,transition:"width .6s ease"}}/>
           </div>
         )}
@@ -5285,6 +5310,8 @@ function App(){
   const [focusNowOnly,setFocusNowOnly]=useState(true);
   const [timer,setTimer]=useState(null);
   const [otherOrder,setOtherOrder]=useState([]); // 手动DnD排序的id列表
+  const [foldDone,setFoldDone]=useState(true); // 已完成列表默认折叠
+  const [completingId,setCompletingId]=useState(null); // 正在完成动效的任务id
   const [focusMode,setFocusMode]=useState(false); // 悬浮计时模式（折叠列表）
   const [dragOverId,setDragOverId]=useState(null);
   const dragSrcId=useRef(null); // {taskId,total,left,running,logged} 当前任务专注计时
@@ -5450,6 +5477,15 @@ function App(){
     const cur=tasksRef.current.find(t=>t.id===id);
     // 完成闸门：练习/节点类任务，没打卡不许直接算完成 → 改为弹打卡框
     if(cur&&!cur.done&&needsCheckIn(cur)){setCheckInTask(cur);return;}
+    // 完成动效：标记完成时触发 200ms 动画再改状态
+    if(cur&&!cur.done){
+      setCompletingId(id);
+      setTimeout(()=>{
+        setCompletingId(null);
+        setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
+      },320);
+      return;
+    }
     setTasksAndSync(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));
     // 同步 episode 状态
     setCourses(cs=>{
@@ -5617,20 +5653,24 @@ function App(){
     if(timer&&!timer.logged){const elapsed=Math.round((timer.total-timer.left)/60);if(elapsed>=1)addPomEntry(0,elapsed);}
     setTimer(null);
   }
+  // ── 触摸排序实现（长按 300ms 触发）──
+  const touchStartY=useRef(0);
+  const touchLongPressTimer=useRef(null);
+  const touchDragging=useRef(false);
+
   function handleDragStart(e,id){
     dragSrcId.current=id;
-    e.dataTransfer.effectAllowed="move";
+    if(e.dataTransfer)e.dataTransfer.effectAllowed="move";
   }
   function handleDragOver(e,id){
-    e.preventDefault();
+    if(e.preventDefault)e.preventDefault();
     setDragOverId(id);
   }
   function handleDrop(e,targetId){
-    e.preventDefault();
+    if(e.preventDefault)e.preventDefault();
     setDragOverId(null);
     const srcId=dragSrcId.current;
-    if(!srcId||srcId===targetId)return;
-    // 重排 otherOrder
+    if(!srcId||srcId===targetId){dragSrcId.current=null;return;}
     setOtherOrder(prev=>{
       const ids=prev.length>0?prev:other.map(t=>t.id);
       const src=ids.indexOf(srcId);
@@ -5642,8 +5682,35 @@ function App(){
       return next;
     });
     dragSrcId.current=null;
+    touchDragging.current=false;
   }
-  function handleDragEnd(){setDragOverId(null);dragSrcId.current=null;}
+  function handleDragEnd(){setDragOverId(null);dragSrcId.current=null;touchDragging.current=false;}
+
+  function handleTouchStart(e,id){
+    touchStartY.current=e.touches[0].clientY;
+    touchLongPressTimer.current=setTimeout(()=>{
+      dragSrcId.current=id;
+      touchDragging.current=true;
+      setDragOverId(id);
+    },280);
+  }
+  function handleTouchMove(e){
+    if(!touchDragging.current){clearTimeout(touchLongPressTimer.current);return;}
+    e.preventDefault();
+    const y=e.touches[0].clientY;
+    // 找到触点下的元素对应的任务id
+    const el=document.elementFromPoint(e.touches[0].clientX,y);
+    const row=el?.closest("[data-taskid]");
+    if(row){const tid=parseInt(row.dataset.taskid);if(tid&&tid!==dragSrcId.current)setDragOverId(tid);}
+  }
+  function handleTouchEnd(e){
+    clearTimeout(touchLongPressTimer.current);
+    if(touchDragging.current&&dragOverId&&dragSrcId.current){
+      handleDrop({preventDefault:()=>{}},dragOverId);
+    } else {
+      handleDragEnd();
+    }
+  }
   // Routine task done handler
   function routineTaskDone(taskId,extra={}){
     setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,done:true,...extra}:t));
@@ -5674,13 +5741,13 @@ function App(){
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask,onToggleInProgress:toggleInProgress};
   const navTop=[{id:"today",l:"今日焦点",i:"ti-sun"},{id:"all",l:"所有任务",i:"ti-list-check"},{id:"calendar",l:"日历",i:"ti-calendar"},{id:"blocking",l:"全局框架",i:"ti-layout-grid"}];
 
-  return<div style={{display:"flex",height:"100vh",background:darkMode?"#1a1728":"#f7f6f3",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
+  return<div style={{display:"flex",height:"100vh",background:darkMode?"#1c1930":"#f7f6f3",colorScheme:darkMode?"dark":"light",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
     {!sidebarOpen&&<button className="mobile-menu-btn" onClick={()=>setSidebarOpen(true)} style={{position:"fixed",top:12,left:12,zIndex:200,background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:8,padding:"7px 10px",fontSize:18,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}}><i className="ti ti-menu-2" style={{fontSize:18,display:"block"}}/></button>}
     {/* sidebar overlay for mobile */}
     {sidebarOpen&&<div className="mobile-menu-btn" onClick={()=>setSidebarOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.3)",zIndex:49}}/>}
     {/* sidebar — icon-only rail */}
-    <div className={`sidebar-desktop sb-icon-rail ${sidebarOpen?"sidebar-mobile-open":""}`} style={{background:darkMode?"#1e1a30":"#fff",borderRight:"0.5px solid #e0ddd6",flexDirection:"column",alignItems:"center",padding:"10px 0",flexShrink:0,overflow:"visible",position:"relative",zIndex:50}}>
+    <div className={`sidebar-desktop sb-icon-rail ${sidebarOpen?"sidebar-mobile-open":""}`} style={{background:darkMode?"#201d35":"#fff",borderRight:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,flexDirection:"column",alignItems:"center",padding:"10px 0",flexShrink:0,overflow:"visible",position:"relative",zIndex:50}}>
       {/* top logo + settings */}
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,marginBottom:8,paddingBottom:8,borderBottom:"0.5px solid #e0ddd6",width:"100%"}}>
         <SbItem icon={darkMode?"ti-sun":"ti-moon"} label={darkMode?"浅色模式":"深色模式"} onClick={()=>setDarkMode(d=>!d)}/>
@@ -5696,25 +5763,23 @@ function App(){
 
       <div style={{flex:1}}/>
 
-      {/* bottom tools */}
-      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,paddingTop:8,borderTop:"0.5px solid #e0ddd6",width:"100%"}}>
-        <SbItem icon="ti-brain" label="脑倾倒" onClick={()=>setShowBrainDump(true)}/>
+      {/* bottom tools — 只保留非主界面入口 */}
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,paddingTop:8,borderTop:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,width:"100%"}}>
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
           return <SbItem icon="ti-hammer" label={`节点拆解${blockCount>0?` (${blockCount}今日)`:""}`}
             onClick={()=>setShowBlockBreaker(true)} badge={blockCount>0?blockCount:null}/>;
         })()}
+        <div style={{width:24,height:"0.5px",background:darkMode?"#3d3560":"#e0ddd6",margin:"4px 0"}}/>
         <SbItem icon="ti-moon-stars" label="结束今天" onClick={()=>setShowMigration(true)}/>
-        <SbItem icon="ti-player-play" label="Routine" onClick={()=>{setShowRoutineSelector(true);setSidebarOpen(false);}}/>
-        <SbItem icon="ti-sparkles" label="AI助手" onClick={()=>setAiOpen(v=>!v)} active={aiOpen}/>
       </div>
     </div>
 
     {/* main */}
     <div className="main-area" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",paddingBottom:timer?"52px":0,transition:"margin-right .2s",marginRight:aiOpen?580:0}}>
-      <div style={{background:"#fff",borderBottom:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+      <div style={{background:darkMode?"#1e1a30":"#fff",borderBottom:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,padding:"12px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:16,fontWeight:500}}>{projView?projView.name:navTop.find(n=>n.id===view)?.l||""}</span>
+          <span style={{fontSize:16,fontWeight:500,color:darkMode?"#f0eaff":"#1a1a1a"}}>{projView?projView.name:navTop.find(n=>n.id===view)?.l||""}</span>
           <SyncBadge status={syncStatus} hasToken={!!ghToken}/>
           {ghToken&&gistId&&(
             <button onClick={loadFromGist} title="重新从Gist拉取数据" style={{fontSize:11,background:"none",border:"0.5px solid #e0ddd6",borderRadius:5,padding:"2px 8px",cursor:"pointer",color:"#888",flexShrink:0}}>
@@ -5764,43 +5829,56 @@ function App(){
             const tm=timer&&timer.taskId===nowT.id?timer:null;
             const mmss=s=>String(Math.floor(s/60)).padStart(2,"0")+":"+String(Math.max(0,s%60)).padStart(2,"0");
             const pct=tm?Math.round((1-tm.left/tm.total)*100):0;
-            const cardBg="#FAFBFF";
-            const cardBorder="#D6DEFF";
-            return<div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:"0 2px 10px rgba(0,0,0,.04)"}}>
+            const cardBg=darkMode?"#242038":"#FAFBFF";
+            const cardBorder=darkMode?"#3d3560":"#D6DEFF";
+            const cardTextMain=darkMode?"#f0eaff":"#1a1a1a";
+            const cardTextSub=darkMode?"#a09cc0":"#999";
+            return<div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:darkMode?"0 2px 10px rgba(0,0,0,.2)":"0 2px 10px rgba(0,0,0,.04)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:inProg?"#0F6E56":prac?"#854F0B":"#185FA5"}}>{inProg?"▶ 进行中":"🎯 现在就做这一件"}</span>
                 <button onClick={()=>setFocusNowOnly(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{focusNowOnly?"显示全部 ▾":"只看当前 ▴"}</button>
               </div>
-              <div onClick={()=>setDetail(nowT)} style={{fontSize:18,fontWeight:600,color:"#1a1a1a",lineHeight:1.35,cursor:"pointer",marginBottom:6}}>{nowT.title}</div>
+              <div onClick={()=>setDetail(nowT)} style={{fontSize:18,fontWeight:600,color:cardTextMain,lineHeight:1.35,cursor:"pointer",marginBottom:6}}>{nowT.title}</div>
               <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
                 <span style={{fontSize:12,color:getProj(nowT.project).color}}>{getProj(nowT.project).name}</span>
-                {est>0&&<span style={{fontSize:12,color:"#999"}}>⏱ 你估{fmtDur(est)} · 按你习惯约{fmtDur(real)}</span>}
+                {est>0&&<span style={{fontSize:12,color:cardTextSub}}>⏱ 你估{fmtDur(est)} · 按你习惯约{fmtDur(real)}</span>}
               </div>
-              {(()=>{const nextStep=nowT.subtasks?.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks?.[0];return nextStep?(<div style={{background:"rgba(255,255,255,0.7)",borderLeft:"2px solid #5DCAA5",borderRadius:"0 6px 6px 0",padding:"5px 9px",marginBottom:10}}><div style={{fontSize:10,color:"#5DCAA5",fontWeight:500,marginBottom:1}}>下一步</div><div style={{fontSize:12,color:"#0F6E56",lineHeight:1.4}}>{nextStep}</div></div>):null;})()}
-              {prac&&<div style={{fontSize:12,color:"#854F0B",background:"rgba(255,255,255,.55)",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55}}>💪 这是你最容易拖的练习类。规则：先做<b>最小版本</b>，2分钟就行——别想着一次做完。开始本身才是难关。</div>}
+              {(()=>{const nextStep=nowT.subtasks?.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks?.[0];return nextStep?(<div style={{background:darkMode?"rgba(29,158,117,.1)":"rgba(255,255,255,0.7)",borderLeft:"2px solid #5DCAA5",borderRadius:"0 6px 6px 0",padding:"5px 9px",marginBottom:10}}><div style={{fontSize:10,color:"#5DCAA5",fontWeight:500,marginBottom:1}}>下一步</div><div style={{fontSize:12,color:darkMode?"#5DCAA5":"#0F6E56",lineHeight:1.4}}>{nextStep}</div></div>):null;})()}
+              {prac&&<div style={{fontSize:12,color:darkMode?"#a09cc0":"#666",background:darkMode?"rgba(255,255,255,.04)":"#f7f7f7",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55,border:`0.5px solid ${darkMode?"#3d3560":"#e8e8e8"}`}}>练习类任务：先做最小版本，2分钟就行。</div>}
               {/* 专注计时进度条 */}
-              {tm&&<div style={{background:"rgba(255,255,255,.65)",borderRadius:10,padding:"10px 12px",marginBottom:10}}>
+              {tm&&<div style={{background:darkMode?"rgba(255,255,255,.06)":"rgba(0,0,0,.04)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                  <span style={{fontSize:20,fontWeight:700,color:tm.left===0?"#0F6E56":"#1a1a1a",fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
-                  <div style={{display:"flex",gap:6}}>
-                    {tm.left>0&&<button onClick={toggleTimerRun} style={{padding:"5px 12px",background:tm.running?"#FBBF24":"#185FA5",color:"#fff",border:"none",borderRadius:7,fontSize:12,cursor:"pointer",fontWeight:600}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
-                    <button onClick={stopTimer} style={{padding:"5px 12px",background:"#fff",color:"#185FA5",border:"0.5px solid #B5D4F4",borderRadius:7,fontSize:12,cursor:"pointer"}}>停止</button>
-                  </div>
+                  <span style={{fontSize:22,fontWeight:700,color:tm.left===0?"#0F6E56":cardTextMain,fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
+                  <span style={{fontSize:11,color:cardTextSub}}>{tm.left===0?"点下方完成":"专注 "+Math.round(tm.total/60)+" 分钟"}</span>
                 </div>
-                <div style={{height:6,background:"rgba(0,0,0,.08)",borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:5,background:darkMode?"rgba(255,255,255,.1)":"rgba(0,0,0,.08)",borderRadius:3,overflow:"hidden"}}>
                   <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#FBBF24":"#185FA5",borderRadius:3,transition:"width 1s linear"}}/>
                 </div>
-                <div style={{fontSize:11,color:"#999",marginTop:4}}>{tm.left===0?"这一段完成了，记一次专注。点上面打卡/完成":"专注 "+Math.round(tm.total/60)+" 分钟 · 已过 "+Math.round((tm.total-tm.left)/60)+" 分"}</div>
               </div>}
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                {!tm&&<button onClick={()=>startTimer(nowT)} style={{flex:1,minWidth:120,padding:"10px",background:"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>▶ 开始 {fmtDur(real||25)}</button>}
+              {/* NowCard 主操作区 */}
+              {!tm&&<div style={{display:"flex",gap:8,marginTop:4}}>
+                <button onClick={()=>startTimer(nowT)}
+                  style={{flex:2,padding:"12px",background:"#185FA5",color:"#fff",border:"none",
+                    borderRadius:9,fontSize:14,fontWeight:700,cursor:"pointer",
+                    boxShadow:"0 3px 12px rgba(24,95,165,.3)"}}>
+                  ▶ 开始 {fmtDur(real||25)}
+                </button>
                 {needsCheckIn(nowT)
-                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,minWidth:110,padding:"10px",background:"transparent",color:"#333",border:"0.5px solid #ccc",borderRadius:8,fontSize:13,fontWeight:500,cursor:"pointer"}}>做完了 · 打卡</button>
-                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,minWidth:110,padding:"10px",background:"transparent",color:"#333",border:"0.5px solid #ccc",borderRadius:8,fontSize:13,fontWeight:500,cursor:"pointer"}}>✓ 做完了</button>}
-                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"10px 14px",background:"#fff",color:"#185FA5",border:"0.5px solid #185FA5",borderRadius:8,fontSize:12,cursor:"pointer"}}>拆分</button>}
-                {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"10px 14px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:8,fontSize:12,cursor:"pointer"}}>砍掉</button>}
-              </div>
-              {rest.length>0&&<div style={{fontSize:11,color:"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,padding:"12px",background:"transparent",color:darkMode?"#f0eaff":"#444",border:`1px solid ${darkMode?"#3d3560":"#d0d0d0"}`,borderRadius:9,fontSize:13,fontWeight:500,cursor:"pointer"}}>做完了</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,padding:"12px",background:"transparent",color:darkMode?"#f0eaff":"#444",border:`1px solid ${darkMode?"#3d3560":"#d0d0d0"}`,borderRadius:9,fontSize:13,fontWeight:500,cursor:"pointer"}}>✓ 做完了</button>}
+              </div>}
+              {!tm&&<div style={{display:"flex",gap:6,marginTop:8}}>
+                {!nowT.subtasks?.length&&<button onClick={()=>aiBreak(nowT.id)} style={{padding:"5px 12px",background:"transparent",color:darkMode?"#6b8abf":"#185FA5",border:`0.5px solid ${darkMode?"#3d5a88":"#B5D4F4"}`,borderRadius:6,fontSize:12,cursor:"pointer"}}>拆分</button>}
+                {prac&&<button onClick={()=>{if(window.confirm("做不动？承认今天不做它，直接删掉？"))delTask(nowT.id);}} style={{padding:"5px 12px",background:"transparent",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:6,fontSize:12,cursor:"pointer"}}>砍掉</button>}
+              </div>}
+              {tm&&<div style={{display:"flex",gap:8,marginTop:4}}>
+                {tm.left>0&&<button onClick={toggleTimerRun} style={{flex:1,padding:"10px",background:tm.running?"#FBBF24":"#185FA5",color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:600,cursor:"pointer"}}>{tm.running?"⏸ 暂停":"▶ 继续"}</button>}
+                {needsCheckIn(nowT)
+                  ?<button onClick={()=>setCheckInTask(nowT)} style={{flex:1,padding:"10px",background:"transparent",color:darkMode?"#f0eaff":"#333",border:`0.5px solid ${darkMode?"#3d3560":"#ccc"}`,borderRadius:8,fontSize:13,cursor:"pointer"}}>做完了</button>
+                  :<button onClick={()=>toggleTask(nowT.id)} style={{flex:1,padding:"10px",background:"transparent",color:darkMode?"#f0eaff":"#333",border:`0.5px solid ${darkMode?"#3d3560":"#ccc"}`,borderRadius:8,fontSize:13,cursor:"pointer"}}>✓ 做完了</button>}
+                <button onClick={stopTimer} style={{padding:"10px 12px",background:"transparent",color:darkMode?"#a09cc0":"#888",border:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,borderRadius:8,fontSize:12,cursor:"pointer"}}>停止</button>
+              </div>}
+              {rest.length>0&&<div style={{fontSize:11,color:darkMode?"#6b6890":"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
             </div>;
           })()}
           {/* Block tasks today banner */}
@@ -5827,35 +5905,38 @@ function App(){
             </div>;
           })()}
           {/* 控制栏：统计数据 + Routine 入口合并 */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:12,marginBottom:12,borderBottom:"0.5px solid #e0ddd6"}}>
-            <div style={{fontSize:13,color:"#666",display:"flex",alignItems:"center",gap:0}}>
-              <span style={{fontWeight:600,color:"#1a1a1a"}}>{focus.length}</span><span style={{marginRight:6}}> 重点</span>
-              <span style={{margin:"0 6px",color:"#ddd"}}>|</span>
-              <span style={{fontWeight:600,color:"#1a1a1a"}}>{tasks.filter(t=>!t.done).length}</span><span style={{marginRight:6}}> 待办</span>
-              <span style={{margin:"0 6px",color:"#ddd"}}>|</span>
-              <span style={{fontWeight:600,color:"#1a1a1a"}}>{done.length}</span><span> 完成</span>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:12,marginBottom:12,borderBottom:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`}}>
+            <div style={{fontSize:13,color:darkMode?"#a09cc0":"#666",display:"flex",alignItems:"center",gap:0}}>
+              <span style={{fontWeight:700,color:darkMode?"#f0eaff":"#1a1a1a"}}>{focus.length}</span><span style={{marginRight:6}}> 重点</span>
+              <span style={{margin:"0 6px",color:darkMode?"#3d3560":"#ddd"}}>|</span>
+              <span style={{fontWeight:700,color:darkMode?"#f0eaff":"#1a1a1a"}}>{tasks.filter(t=>!t.done).length}</span><span style={{marginRight:6}}> 待办</span>
+              <span style={{margin:"0 6px",color:darkMode?"#3d3560":"#ddd"}}>|</span>
+              <span style={{fontWeight:700,color:darkMode?"#f0eaff":"#1a1a1a"}}>{done.length}</span><span> 完成</span>
               {(()=>{const total=getTotalEstimate(focus.filter(t=>!t.done));const real=realisticEstimate(total);return total>0?(
-                <span style={{marginLeft:8,fontSize:11,color:"#aaa",background:"#f7f6f3",borderRadius:4,padding:"1px 6px"}} title={`你原本估了${fmtDur(total)}，AI 已根据习惯修正`}>
+                <span style={{marginLeft:8,fontSize:11,color:darkMode?"#6b6890":"#aaa",background:darkMode?"rgba(255,255,255,.05)":"#f7f6f3",borderRadius:4,padding:"1px 6px"}} title={`你原本估了${fmtDur(total)}，AI 已根据习惯修正`}>
                   ⏱ 约{fmtDur(real)}
                 </span>
               ):null;})()}
             </div>
-            <button onClick={()=>setShowRoutineSelector(true)} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 10px",background:"#f7f6f3",border:"0.5px solid #e0ddd6",borderRadius:6,cursor:"pointer",fontSize:11,color:"#666",fontWeight:500,flexShrink:0}}>
-              <span>⚡</span><span>专注流</span>
-            </button>
+            <div style={{display:"flex",alignItems:"center",gap:0,flexShrink:0}}>
+              <div style={{width:"0.5px",height:16,background:darkMode?"#3d3560":"#e0ddd6",marginRight:12}}/>
+              <button onClick={()=>setShowRoutineSelector(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 12px",background:darkMode?"rgba(251,191,36,.12)":"#FFFBEB",border:`1px solid ${darkMode?"rgba(251,191,36,.3)":"#F0C040"}`,borderRadius:8,cursor:"pointer",fontSize:12,color:darkMode?"#FBBF24":"#92700A",fontWeight:600,boxShadow:darkMode?"0 0 0 0 rgba(251,191,36,0)":"0 1px 4px rgba(240,192,64,.2)"}}>
+                <span style={{fontSize:14}}>⚡</span><span>专注流</span>
+              </button>
+            </div>
           </div>
           {null/* 估时提示已合并入统计行 */}
           {null/* 习惯追踪已隐藏 */}
           {null/* 番茄统计已删除 */}
-          {!focusNowOnly&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px",marginBottom:20}}>
+          {!focusNowOnly&&<div style={{background:darkMode?"#1e1a30":"#fff",border:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,borderRadius:12,padding:"16px 20px",marginBottom:20}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 按顺序做（前面先做）</span>
               <button onClick={()=>setAiOpen(true)} style={{fontSize:12,color:"#185FA5",background:"none",border:"none",cursor:"pointer"}}>AI重新规划↗</button>
             </div>
-            {focus.length?coachOrder(focus).map(t=><TaskRow key={t.id} task={t} {...tProps}/>):<div style={{fontSize:13,color:"#aaa",padding:"8px 0"}}>没有紧急任务，今天很轻松 🎉</div>}
+            {focus.length?coachOrder(focus).map(t=><TaskRow key={t.id} task={t} {...tProps} completing={completingId===t.id}/>):<div style={{fontSize:13,color:"#aaa",padding:"8px 0"}}>没有紧急任务，今天很轻松 🎉</div>}
           </div>}
           {other.length>0&&<>
-            <div style={{fontSize:13,fontWeight:500,marginBottom:10,color:"#888",display:"flex",alignItems:"center",gap:6}}>
+            <div style={{fontSize:13,fontWeight:500,marginBottom:10,color:darkMode?"#a09cc0":"#888",display:"flex",alignItems:"center",gap:6}}>
               其他待办
               <span style={{fontSize:10,color:"#bbb",fontWeight:400}}>拖拽排序</span>
             </div>
@@ -5868,15 +5949,23 @@ function App(){
                   onDragStart={handleDragStart}
                   onDragOver={handleDragOver}
                   onDrop={handleDrop}
-                  isDragOver={dragOverId===t.id}/>
+                  isDragOver={dragOverId===t.id}
+                  completing={completingId===t.id}
+                  onTouchStartDrag={handleTouchStart}
+                  onTouchMoveDrag={handleTouchMove}
+                  onTouchEndDrag={handleTouchEnd}/>
               ));
             })()}
           </>}
           {done.length>0&&<>
-            <div style={{display:"flex",alignItems:"center",gap:10,margin:"18px 0 10px"}}>
+            <div onClick={()=>setFoldDone(v=>!v)}
+              style={{display:"flex",alignItems:"center",gap:10,margin:"24px 0 8px",cursor:"pointer",userSelect:"none"}}>
               <StatusCat tasks={tasks} darkMode={darkMode} compact/>
+              <span style={{fontSize:12,color:"#bbb",marginLeft:"auto",flexShrink:0}}>{foldDone?"▸ 展开":"▾ 收起"}</span>
             </div>
-            {done.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}
+            {!foldDone&&<div style={{background:darkMode?"rgba(255,255,255,.03)":"#f7f6f3",borderRadius:10,padding:"6px 8px",marginBottom:8}}>
+              {done.map(t=><TaskRow key={t.id} task={t} {...tProps} slim/>)}
+            </div>}
           </>}
         </>}
         {view==="all"&&<>
@@ -5899,11 +5988,18 @@ function App(){
         )}
       </div>
 
-      <div style={{background:"#fff",borderTop:"0.5px solid #e0ddd6",padding:"12px 24px",display:"flex",gap:10,flexShrink:0}}>
-        <input value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addQuick()} placeholder="快速添加任务…" style={{flex:1,padding:"8px 12px",border:"0.5px solid #ccc",borderRadius:7,fontSize:13}}/>
-        <button onClick={addQuick} style={{padding:"8px 14px",border:"0.5px solid #ccc",background:"#fff",borderRadius:7,fontSize:13,cursor:"pointer"}}>添加↵</button>
-        <button onClick={()=>setShowBrainDump(true)} style={{padding:"8px 12px",border:"0.5px solid #e0ddd6",background:"#f7f6f3",borderRadius:7,fontSize:13,cursor:"pointer",color:"#666"}}>🧠</button>
-        <button onClick={()=>setAiOpen(true)} style={{padding:"8px 14px",border:"0.5px solid #B5D4F4",background:"#EBF3FB",color:"#185FA5",borderRadius:7,fontSize:13,cursor:"pointer"}}>✨ AI</button>
+      <div style={{background:darkMode?"#1e1a30":"#fff",borderTop:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,padding:"10px 16px",display:"flex",gap:8,flexShrink:0,alignItems:"center"}} onTouchMove={e=>e.stopPropagation()}>
+        <input value={quick} onChange={e=>setQuick(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addQuick()} placeholder="快速添加任务…"
+          style={{flex:1,padding:"8px 12px",border:`0.5px solid ${darkMode?"#3d3560":"#ccc"}`,borderRadius:7,fontSize:13,background:darkMode?"#2a2440":"#fff",color:darkMode?"#f0eaff":"#1a1a1a"}}/>
+        <button onClick={addQuick} title="添加" style={{padding:"8px 10px",border:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,background:darkMode?"#2a2440":"#f7f6f3",borderRadius:7,fontSize:16,cursor:"pointer",color:darkMode?"#a09cc0":"#666",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <i className="ti ti-send" style={{fontSize:16}}/>
+        </button>
+        <button onClick={()=>setShowBrainDump(true)} title="脑倾倒" style={{padding:"8px 10px",border:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,background:darkMode?"#2a2440":"#f7f6f3",borderRadius:7,fontSize:16,cursor:"pointer",color:darkMode?"#a09cc0":"#666",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <i className="ti ti-brain" style={{fontSize:16}}/>
+        </button>
+        <button onClick={()=>setAiOpen(true)} title="AI助手" style={{padding:"8px 10px",border:`0.5px solid ${darkMode?"#4a6fa5":"#B5D4F4"}`,background:darkMode?"#1e3052":"#EBF3FB",borderRadius:7,fontSize:16,cursor:"pointer",color:"#185FA5",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <i className="ti ti-sparkles" style={{fontSize:16}}/>
+        </button>
       </div>
     </div>
 
@@ -5921,6 +6017,7 @@ function App(){
     {showRoutineManager&&<RoutineManager onClose={()=>setShowRoutineManager(false)} darkMode={darkMode}/>}
     {activeRoutine&&<RoutineExecutor routine={activeRoutine} tasks={tasks} darkMode={darkMode} onTaskDone={(id,extra)=>routineTaskDone(id,extra)} onComplete={()=>setActiveRoutine(null)} onExit={()=>setActiveRoutine(null)}/>}
 
+    {null/* 吸底按钮已移入NowCard */}
     {/* ── Focus Mode 悬浮条 ── */}
     {timer&&(()=>{
       const nowT=tasks.find(t=>t.id===timer.taskId);
