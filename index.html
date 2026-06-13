@@ -1152,18 +1152,20 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
   function hasDot(d){const s=yyyymmdd(d);return tasks.some(t=>t.due===s)||getDayEntries(s).length>0;}
   const selEntries=getDayEntries(selDay);
   const selTasks=tasks.filter(t=>t.due===selDay);
-  return<div style={{display:"flex",gap:20,alignItems:"flex-start"}}>
-    <div style={{width:280,flexShrink:0}}>
+  const isMobile=typeof window!=="undefined"&&window.innerWidth<=640;
+  return<div style={{display:"flex",flexDirection:isMobile?"column":"row",gap:isMobile?12:20,alignItems:"flex-start"}}>
+    {/* 左栏：日历 */}
+    <div style={{width:isMobile?"100%":280,flexShrink:0}}>
       <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,overflow:"hidden"}}>
         <div style={{padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"0.5px solid #e0ddd6"}}>
-          <button onClick={()=>setCurMonth(m=>m.m===0?{y:m.y-1,m:11}:{y:m.y,m:m.m-1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#666",lineHeight:1}}>‹</button>
+          <button onClick={()=>setCurMonth(m=>m.m===0?{y:m.y-1,m:11}:{y:m.y,m:m.m-1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#666",lineHeight:1,padding:"4px 8px"}}>‹</button>
           <span style={{fontSize:14,fontWeight:500}}>{curMonth.y}年{MONTHS[curMonth.m]}</span>
-          <button onClick={()=>setCurMonth(m=>m.m===11?{y:m.y+1,m:0}:{y:m.y,m:m.m+1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#666",lineHeight:1}}>›</button>
+          <button onClick={()=>setCurMonth(m=>m.m===11?{y:m.y+1,m:0}:{y:m.y,m:m.m+1})} style={{background:"none",border:"none",cursor:"pointer",fontSize:20,color:"#666",lineHeight:1,padding:"4px 8px"}}>›</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"8px 8px 0"}}>
           {["一","二","三","四","五","六","日"].map(d=><div key={d} style={{textAlign:"center",fontSize:11,color:"#bbb",padding:"4px 0"}}>{d}</div>)}
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"0 8px 8px",gap:2}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"0 8px 10px",gap:2}}>
           {cells.map((d,i)=>{
             if(!d)return<div key={`e${i}`}/>;
             const ds=yyyymmdd(d);const isT=ds===today;const isSel=ds===selDay;const has=hasDot(d);
@@ -1174,44 +1176,77 @@ function CalendarView({tasks,onAddTask,journal,onJournalUpdate}){
           })}
         </div>
       </div>
-      <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"12px 14px",marginTop:10}}>
+      {/* 符号说明（桌面端才显示，手机折叠） */}
+      {!isMobile&&<div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:10,padding:"12px 14px",marginTop:10}}>
         <div style={{fontSize:11,color:"#aaa",marginBottom:8}}>符号说明</div>
         {BULLET_TYPES.map(b=><div key={b.sym} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
           <span style={{width:20,textAlign:"center",fontWeight:700,color:b.color,fontSize:14}}>{b.sym}</span>
           <span style={{fontSize:12,color:"#555"}}>{b.label}</span>
         </div>)}
-      </div>
+      </div>}
     </div>
-    <div style={{flex:1,minWidth:0}}>
-      <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,padding:"16px 20px"}}>
-        <div style={{fontSize:15,fontWeight:500,marginBottom:14}}>
-          {new Date(selDay+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}
-          {selDay===today&&<span style={{fontSize:12,color:"#185FA5",background:"#EBF3FB",padding:"2px 8px",borderRadius:6,marginLeft:8}}>今天</span>}
+
+    {/* 右栏：当日详情 */}
+    <div style={{flex:1,minWidth:0,width:isMobile?"100%":undefined}}>
+      <div style={{background:"#fff",border:"0.5px solid #e0ddd6",borderRadius:12,overflow:"hidden"}}>
+        {/* 日期标题 */}
+        <div style={{padding:"14px 16px",borderBottom:"0.5px solid #f0ede8",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:15,fontWeight:600,color:"#1a1a1a"}}>
+            {new Date(selDay+"T00:00:00").toLocaleDateString("zh-CN",{month:"long",day:"numeric",weekday:"long"})}
+          </span>
+          {selDay===today&&<span style={{fontSize:11,color:"#185FA5",background:"#EBF3FB",padding:"2px 8px",borderRadius:10,fontWeight:500}}>今天</span>}
+          {selTasks.length>0&&<span style={{fontSize:11,color:"#888",marginLeft:"auto"}}>{selTasks.filter(t=>t.done).length}/{selTasks.length} 完成</span>}
         </div>
-        {selTasks.length>0&&<div style={{marginBottom:14}}>
-          <div style={{fontSize:11,color:"#aaa",marginBottom:6}}>截止任务</div>
-          {selTasks.map(t=><div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",borderRadius:6,background:"#f7f6f3",marginBottom:4}}>
-            <span style={{fontSize:12,color:getProj(t.project).color}}>●</span>
-            <span style={{fontSize:13,flex:1,color:t.done?"#aaa":"#1a1a1a",textDecoration:t.done?"line-through":"none"}}>{t.title}</span>
-            <Tag type={t.priority}/>
-          </div>)}
-          <div style={{height:"0.5px",background:"#e0ddd6",margin:"12px 0"}}/>
+
+        {/* 截止任务区 */}
+        {selTasks.length>0&&<div style={{padding:"10px 12px",borderBottom:"0.5px solid #f0ede8"}}>
+          <div style={{fontSize:11,color:"#aaa",fontWeight:500,marginBottom:8,textTransform:"uppercase",letterSpacing:".04em"}}>截止任务</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {selTasks.map(t=>{
+              const proj=getProj(t.project);
+              return<div key={t.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,background:t.done?"#fafafa":"#f7f6f3",border:`0.5px solid ${t.done?"#f0ede8":"#ebe8e2"}`}}>
+                <span style={{width:8,height:8,borderRadius:"50%",background:t.done?"#ccc":proj.color,flexShrink:0}}/>
+                <span style={{flex:1,fontSize:14,color:t.done?"#aaa":"#1a1a1a",textDecoration:t.done?"line-through":"none",lineHeight:1.4,wordBreak:"break-all"}}>{t.title}</span>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <Tag type={t.priority}/>
+                  <MigrateTag count={t.migrateCount}/>
+                </div>
+              </div>;
+            })}
+          </div>
         </div>}
-        {selEntries.map(e=>{
-          const bt=BULLET_TYPES.find(b=>b.sym===e.sym)||BULLET_TYPES[2];
-          return<div key={e.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 0",borderBottom:"0.5px solid #f0ede8"}}>
-            <button onClick={()=>toggleEntry(selDay,e.id)} style={{width:24,height:24,flexShrink:0,background:"none",border:"none",cursor:"pointer",fontSize:15,color:bt.color,fontWeight:700,lineHeight:1,padding:0,marginTop:1}}>{e.sym}</button>
-            <span style={{flex:1,fontSize:14,color:e.done?"#aaa":"#1a1a1a",textDecoration:e.done?"line-through":"none",lineHeight:1.5}}>{e.text}</span>
-            <button onClick={()=>deleteEntry(selDay,e.id)} style={{color:"#ddd",background:"none",border:"none",cursor:"pointer",fontSize:13}}>✕</button>
-          </div>;
-        })}
-        {selEntries.length===0&&selTasks.length===0&&<div style={{fontSize:13,color:"#ccc",padding:"16px 0",textAlign:"center"}}>这天还没有记录</div>}
-        <div style={{marginTop:14,display:"flex",gap:8,alignItems:"center"}}>
-          <select value={newType} onChange={e=>setNewType(e.target.value)} style={{width:82,padding:"7px 6px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
-            {BULLET_TYPES.map(b=><option key={b.sym} value={b.sym}>{b.sym} {b.label}</option>)}
-          </select>
-          <input value={newEntry} onChange={e=>setNewEntry(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addEntry()} placeholder={newType==="•"?"任务（自动同步到任务列表）…":"输入记录…"} style={{flex:1,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
-          <button onClick={addEntry} style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:6,fontSize:13,cursor:"pointer"}}>记录</button>
+
+        {/* 日记条目区 */}
+        <div style={{padding:"10px 12px"}}>
+          {selEntries.length>0&&<>
+            <div style={{fontSize:11,color:"#aaa",fontWeight:500,marginBottom:8,textTransform:"uppercase",letterSpacing:".04em"}}>日记</div>
+            {selEntries.map(e=>{
+              const bt=BULLET_TYPES.find(b=>b.sym===e.sym)||BULLET_TYPES[2];
+              return<div key={e.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"7px 0",borderBottom:"0.5px solid #f7f6f3"}}>
+                <button onClick={()=>toggleEntry(selDay,e.id)} style={{width:26,height:26,flexShrink:0,background:"none",border:"0.5px solid #e8e5de",borderRadius:6,cursor:"pointer",fontSize:14,color:bt.color,fontWeight:700,lineHeight:1,padding:0,marginTop:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{e.sym}</button>
+                <span style={{flex:1,fontSize:14,color:e.done?"#aaa":"#1a1a1a",textDecoration:e.done?"line-through":"none",lineHeight:1.55,paddingTop:3,wordBreak:"break-all"}}>{e.text}</span>
+                <button onClick={()=>deleteEntry(selDay,e.id)} style={{color:"#ccc",background:"none",border:"none",cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 0",flexShrink:0}}>✕</button>
+              </div>;
+            })}
+          </>}
+          {selEntries.length===0&&selTasks.length===0&&<div style={{fontSize:13,color:"#ccc",padding:"20px 0",textAlign:"center"}}>这天还没有记录</div>}
+        </div>
+
+        {/* 输入区 */}
+        <div style={{padding:"10px 12px",borderTop:"0.5px solid #f0ede8",background:"#fafaf9"}}>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            <select value={newType} onChange={e=>setNewType(e.target.value)}
+              style={{width:isMobile?70:82,padding:"7px 6px",border:"0.5px solid #ccc",borderRadius:7,fontSize:13,flexShrink:0}}>
+              {BULLET_TYPES.map(b=><option key={b.sym} value={b.sym}>{b.sym} {b.label}</option>)}
+            </select>
+            <input value={newEntry} onChange={e=>setNewEntry(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addEntry()}
+              placeholder={newType==="•"?"任务（自动加入任务列表）…":"输入记录…"}
+              style={{flex:1,minWidth:120,padding:"7px 10px",border:"0.5px solid #ccc",borderRadius:7,fontSize:13}}/>
+            <button onClick={addEntry}
+              style={{padding:"7px 14px",background:"#1a1a1a",color:"#fff",border:"none",borderRadius:7,fontSize:13,cursor:"pointer",flexShrink:0}}>
+              记录
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -5612,6 +5647,65 @@ function App(){
     const due=yyyymmdd(new Date(y,m,1));
     addTask({title:text,project:1,due,priority:"normal"});
   }
+
+  // ── 外部工具数据推送 ──────────────────────
+  // 从 course-manager (cm_courses_v1) 和 ReadIt (rd_books_v1) 单向推送今日任务
+  function pushExternalTools(){
+    const today=todayStr();
+    const added=[];
+    const existingTitles=new Set(tasksRef.current.map(t=>t.title));
+
+    // ① 课程管理器：读取当天 deadline 紧或 doing 状态的条目
+    try{
+      const cmCourses=lsGet("cm_courses_v1",[]);
+      cmCourses.forEach(c=>{
+        if(c.archived)return;
+        (c.units||[]).forEach(u=>{
+          (u.items||[]).forEach(item=>{
+            if(item.status==="done")return;
+            const isDoing=item.status==="doing";
+            let shouldPush=isDoing;
+            if(!shouldPush&&c.deadline){
+              const daysLeft=Math.max(1,Math.ceil((new Date(c.deadline)-new Date())/86400000));
+              const remaining=(u.items||[]).filter(i=>i.status!=="done").length;
+              if(daysLeft<=7||remaining/daysLeft>=1)shouldPush=true;
+            }
+            if(shouldPush){
+              const title=`[${c.name}] ${item.title}`;
+              if(!existingTitles.has(title)){
+                added.push({title,project:2,due:today,priority:isDoing?"urgent":"today",
+                  estimate:item.duration?String(parseInt(item.duration)||30):"",
+                  notes:`来自课程管理器 · ${c.name}`});
+                existingTitles.add(title);
+              }
+            }
+          });
+        });
+      });
+    }catch(e){console.warn("cm push error",e);}
+
+    // ② ReadIt：读取在读的书，推送每日阅读任务
+    try{
+      const rdBooks=lsGet("rd_books_v1",[]);
+      rdBooks.forEach(book=>{
+        if(book.status!=="reading")return;
+        const title=`[阅读] ${book.title}`;
+        if(!existingTitles.has(title)){
+          added.push({title,project:2,due:today,priority:"today",
+            estimate:"30",
+            notes:`来自 ReadIt · 当前进度 ${book.currentPage||0}/${book.totalPages||"?"} 页`});
+          existingTitles.add(title);
+        }
+      });
+    }catch(e){console.warn("rd push error",e);}
+
+    if(added.length===0){
+      alert("没有找到新的推送任务\n（已存在的任务不会重复添加）");
+      return;
+    }
+    added.forEach(t=>addTask(t));
+    alert(`✓ 已推送 ${added.length} 个任务到今日`);
+  }
   // NEW: save check-in data on a task
   function saveCheckIn(taskId,checkInData){
     setTasksAndSync(ts=>ts.map(t=>t.id===taskId?{...t,...checkInData}:t));
@@ -5765,13 +5859,22 @@ function App(){
 
       {/* bottom tools — 只保留非主界面入口 */}
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,paddingTop:8,borderTop:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,width:"100%"}}>
+        {/* 未来清单入口 */}
+        {(()=>{
+          const futureCount=Object.values(futureLog||{}).reduce((s,arr)=>s+(arr?.length||0),0);
+          return <SbItem icon="ti-hourglass" label={`未来清单${futureCount>0?` (${futureCount})`:""}`}
+            active={view==="future"}
+            onClick={()=>{setView("future");setProjView(null);setSidebarOpen(false);}}
+            badge={futureCount>0?futureCount:null}/>;
+        })()}
+        <div style={{width:24,height:"0.5px",background:darkMode?"#3d3560":"#e0ddd6",margin:"2px 0"}}/>
         {(()=>{
           const blockCount=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr()).length;
           return <SbItem icon="ti-hammer" label={`节点拆解${blockCount>0?` (${blockCount}今日)`:""}`}
             onClick={()=>setShowBlockBreaker(true)} badge={blockCount>0?blockCount:null}/>;
         })()}
-        <div style={{width:24,height:"0.5px",background:darkMode?"#3d3560":"#e0ddd6",margin:"4px 0"}}/>
-        <SbItem icon="ti-moon-stars" label="结束今天" onClick={()=>setShowMigration(true)}/>
+        <div style={{width:24,height:"0.5px",background:darkMode?"#3d3560":"#e0ddd6",margin:"2px 0"}}/>
+        <SbItem icon="ti-door-exit" label="结束今天" onClick={()=>setShowMigration(true)}/>
       </div>
     </div>
 
@@ -5918,8 +6021,14 @@ function App(){
                 </span>
               ):null;})()}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:0,flexShrink:0}}>
-              <div style={{width:"0.5px",height:16,background:darkMode?"#3d3560":"#e0ddd6",marginRight:12}}/>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+              {/* 外部工具推送按钮 */}
+              <button onClick={pushExternalTools} title="从课程管理器和ReadIt拉取今日推荐任务"
+                style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",background:darkMode?"rgba(15,110,86,.15)":"#E8F6F2",border:`0.5px solid ${darkMode?"rgba(15,110,86,.4)":"#A8DDC8"}`,borderRadius:7,cursor:"pointer",fontSize:11,color:darkMode?"#5DCAA5":"#0F6E56",fontWeight:500}}>
+                <i className="ti ti-download" style={{fontSize:13,lineHeight:1}}/>
+                <span>拉取</span>
+              </button>
+              <div style={{width:"0.5px",height:16,background:darkMode?"#3d3560":"#e0ddd6"}}/>
               <button onClick={()=>setShowRoutineSelector(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"5px 12px",background:darkMode?"rgba(251,191,36,.12)":"#FFFBEB",border:`1px solid ${darkMode?"rgba(251,191,36,.3)":"#F0C040"}`,borderRadius:8,cursor:"pointer",fontSize:12,color:darkMode?"#FBBF24":"#92700A",fontWeight:600,boxShadow:darkMode?"0 0 0 0 rgba(251,191,36,0)":"0 1px 4px rgba(240,192,64,.2)"}}>
                 <span style={{fontSize:14}}>⚡</span><span>专注流</span>
               </button>
