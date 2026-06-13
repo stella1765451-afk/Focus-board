@@ -31,6 +31,8 @@ textarea{resize:vertical}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 .task-completing{animation:taskComplete .35s ease forwards}
 @keyframes taskComplete{0%{opacity:1;transform:scale(1)}40%{opacity:.9;transform:scale(1.02) translateX(4px)}100%{opacity:0;transform:scale(.97) translateX(8px)}}
+@keyframes snapToCard{0%{opacity:0;transform:translateY(-12px) scale(.97)}60%{transform:translateY(2px) scale(1.01)}100%{opacity:1;transform:translateY(0) scale(1)}}
+.nowcard-snap{animation:snapToCard .32s cubic-bezier(.22,1,.36,1) forwards}
 .pulse{animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
@@ -125,7 +127,7 @@ const BULLET_TYPES=[
   {sym:"×",label:"已取消",color:"#A32D2D"},
 ];
 const MONTHS=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
-const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false,isPractice:false,requireCheckIn:false,inProgress:false};
+const BLANK_TASK={notes:"",attachments:[],subtasks:[],subtaskDone:[],expanded:false,startDate:"",done:false,migrateCount:0,fromJournal:false,isPractice:false,requireCheckIn:false,inProgress:false,startTime:""};
 
 /* ═══════════════════════════════════════════
    DATE HELPERS
@@ -647,6 +649,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
+        {task.startTime&&!task.done&&<span style={{fontSize:11,color:"#185FA5",background:"#EBF3FB",padding:"1px 6px",borderRadius:4,whiteSpace:"nowrap",fontWeight:500}}>🕐{task.startTime}</span>}
         {task.due&&<span style={{fontSize:11,color:ov?"#A32D2D":dueToday?"#854F0B":"#aaa",fontWeight:ov||dueToday?600:400,whiteSpace:"nowrap",background:"transparent",padding:ov||dueToday?"1px 6px":"0",borderRadius:4}}>📅{fmtDate(task.due)}</span>}
         <Tag type={task.priority}/>
         <MigrateTag count={task.migrateCount}/>
@@ -697,7 +700,7 @@ function TaskRow({task,onToggle,onToggleSub,onExpand,onAI,onOpen,onCheckIn,onTog
    TASK DETAIL MODAL
 ═══════════════════════════════════════════ */
 function TaskDetail({task,onClose,onSave,onDelete}){
-  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone],estimate:task.estimate||"",isPractice:task.isPractice||false,requireCheckIn:task.requireCheckIn||false});
+  const [f,setF]=useState({title:task.title,project:task.project,due:task.due||"",startDate:task.startDate||"",priority:task.priority,notes:task.notes||"",attachments:[...(task.attachments||[])],subtasks:[...task.subtasks],subtaskDone:[...task.subtaskDone],estimate:task.estimate||"",isPractice:task.isPractice||false,requireCheckIn:task.requireCheckIn||false,startTime:task.startTime||""});
   const [ns,setNs]=useState("");
   const fRef=useRef();
   function up(k,v){setF(x=>({...x,[k]:v}));}
@@ -716,6 +719,11 @@ function TaskDetail({task,onClose,onSave,onDelete}){
             ["优先级",<select value={f.priority} onChange={e=>up("priority",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}><option value="urgent">🔴 紧急</option><option value="today">🟡 今天</option><option value="normal">⚪ 普通</option></select>],
             ["开始日期",<input type="date" value={f.startDate} onChange={e=>up("startDate",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
             ["截止日期",<input type="date" value={f.due} onChange={e=>up("due",e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>],
+            ["开始时间",<div style={{display:"flex",alignItems:"center",gap:6}}>
+              <input type="time" value={f.startTime} onChange={e=>up("startTime",e.target.value)}
+                style={{flex:1,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}/>
+              {f.startTime&&<button onClick={()=>up("startTime","")} style={{color:"#aaa",background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px",flexShrink:0}}>✕</button>}
+            </div>],
             ["预计时间",<TimeEstimateSelect value={f.estimate||""} onChange={v=>up("estimate",v)}/>],
           ].map(([l,el])=><div key={l}><div style={{fontSize:11,color:"#aaa",marginBottom:4}}>{l}</div>{el}</div>)}
         </div>
@@ -975,6 +983,216 @@ function MonthlyReview({tasks,onClose}){
       </div>
     </div>
   </div>;
+}
+
+/* ═══════════════════════════════════════════
+   DASHBOARD VIEW — 学习状态聚合概览
+═══════════════════════════════════════════ */
+function DashboardView({tasks,courses,futureLog,darkMode,onSetView}){
+  const dm=darkMode;
+  const bg=dm?"#1a1728":"#f7f6f3";
+  const card=dm?"#242038":"#fff";
+  const border=dm?"#3d3560":"#e0ddd6";
+  const text=dm?"#f0eaff":"#1a1a1a";
+  const sub=dm?"#a09cc0":"#888";
+
+  // ── 任务统计 ──
+  const today=todayStr();
+  const todayTasks=tasks.filter(t=>t.due===today&&!t.done);
+  const todayDone=tasks.filter(t=>t.due===today&&t.done);
+  const totalPending=tasks.filter(t=>!t.done).length;
+  const taskPct=todayTasks.length+todayDone.length>0?Math.round(todayDone.length/(todayTasks.length+todayDone.length)*100):0;
+
+  // ── 课程管理器数据 ──
+  let cmCourses=[];
+  try{cmCourses=lsGet("cm_courses_v1",[]).filter(c=>!c.archived);}catch(e){}
+  const cmActive=cmCourses.filter(c=>{
+    const eps=c.episodes||[];const u=c.units||[];
+    const items=u.flatMap(x=>x.items||[]);
+    return(eps.length>0||items.length>0)&&(eps.some(e=>e.status!=="done")||items.some(i=>i.status!=="done"));
+  });
+
+  // ── ReadIt 数据 ──
+  let rdBooks=[];
+  try{rdBooks=lsGet("rd_books_v1",[]);}catch(e){}
+  const reading=rdBooks.filter(b=>b.status==="reading");
+
+  // ── 未来清单 ──
+  const futureTotal=Object.values(futureLog||{}).reduce((s,arr)=>s+(arr?.length||0),0);
+  const now=new Date();
+  const nextMk=monthKey(now.getFullYear(),now.getMonth()+2);
+  const nextCount=(futureLog[nextMk]||[]).length;
+
+  function StatCard({label,value,sub:subLabel,color,onClick}){
+    return<div onClick={onClick} style={{background:card,border:`0.5px solid ${border}`,borderRadius:12,padding:"14px 16px",cursor:onClick?"pointer":"default",flex:1,minWidth:120}}>
+      <div style={{fontSize:11,color:sub,marginBottom:4,fontWeight:500}}>{label}</div>
+      <div style={{fontSize:28,fontWeight:700,color:color||text,lineHeight:1.1}}>{value}</div>
+      {subLabel&&<div style={{fontSize:11,color:sub,marginTop:4}}>{subLabel}</div>}
+    </div>;
+  }
+
+  return<div style={{maxWidth:640,margin:"0 auto"}}>
+    {/* 今日任务概览 */}
+    <div style={{fontSize:11,color:sub,fontWeight:600,letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>今日任务</div>
+    <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
+      <StatCard label="今日完成" value={todayDone.length} sub={`共${todayTasks.length+todayDone.length}个 · ${taskPct}%`} color="#0F6E56"/>
+      <StatCard label="全部待办" value={totalPending} sub="跨所有日期" onClick={()=>onSetView("all")}/>
+      <StatCard label="今日到点" value={todayTasks.filter(t=>t.startTime).length} sub="有开始时间的任务"/>
+    </div>
+    {/* 进度条 */}
+    {todayTasks.length+todayDone.length>0&&<div style={{marginBottom:20}}>
+      <div style={{height:6,background:dm?"#2a2440":"#f0ede8",borderRadius:3,overflow:"hidden",marginBottom:4}}>
+        <div style={{height:"100%",width:taskPct+"%",background:"#0F6E56",borderRadius:3,transition:"width .5s"}}/>
+      </div>
+      <div style={{fontSize:11,color:sub}}>{todayDone.length} 完成 · {todayTasks.length} 待做</div>
+    </div>}
+
+    {/* 课程管理器 */}
+    {cmActive.length>0&&<>
+      <div style={{fontSize:11,color:sub,fontWeight:600,letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>课程进度</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:20}}>
+        {cmActive.slice(0,4).map(c=>{
+          const items=(c.units||[]).flatMap(u=>u.items||[]);
+          const done=items.filter(i=>i.status==="done").length;
+          const total=Math.max(c.totalEpisodes||0,items.length,1);
+          const pct=Math.round(done/total*100);
+          const dl=c.deadline?new Date(c.deadline):null;
+          const daysLeft=dl?Math.ceil((dl-new Date())/86400000):null;
+          return<div key={c.id} style={{background:card,border:`0.5px solid ${border}`,borderRadius:10,padding:"12px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:500,color:text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginRight:8}}>{c.name}</span>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexShrink:0}}>
+                {daysLeft!==null&&<span style={{fontSize:11,color:daysLeft<=7?"#A32D2D":"#888"}}>还剩{daysLeft}天</span>}
+                <span style={{fontSize:11,color:sub}}>{done}/{total}</span>
+              </div>
+            </div>
+            <div style={{height:4,background:dm?"#2a2440":"#f0ede8",borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:pct+"%",background:"#185FA5",borderRadius:2,transition:"width .5s"}}/>
+            </div>
+          </div>;
+        })}
+        {cmActive.length>4&&<div style={{fontSize:12,color:sub,textAlign:"center",paddingTop:4}}>还有 {cmActive.length-4} 门课程，前往课程管理器查看</div>}
+      </div>
+    </>}
+
+    {/* ReadIt 阅读进度 */}
+    {reading.length>0&&<>
+      <div style={{fontSize:11,color:sub,fontWeight:600,letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>阅读进度</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:20}}>
+        {reading.slice(0,3).map(b=>{
+          const pct=b.totalPages>0?Math.round((b.currentPage||0)/b.totalPages*100):0;
+          return<div key={b.id||b.title} style={{background:card,border:`0.5px solid ${border}`,borderRadius:10,padding:"12px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <span style={{fontSize:13,fontWeight:500,color:text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginRight:8}}>{b.emoji||"📖"} {b.title}</span>
+              <span style={{fontSize:11,color:sub,flexShrink:0}}>{b.currentPage||0}/{b.totalPages||"?"}页 · {pct}%</span>
+            </div>
+            <div style={{height:4,background:dm?"#2a2440":"#f0ede8",borderRadius:2,overflow:"hidden"}}>
+              <div style={{height:"100%",width:pct+"%",background:"#0F6E56",borderRadius:2,transition:"width .5s"}}/>
+            </div>
+          </div>;
+        })}
+      </div>
+    </>}
+
+    {/* 未来清单概要 */}
+    <div style={{fontSize:11,color:sub,fontWeight:600,letterSpacing:".06em",marginBottom:8,textTransform:"uppercase"}}>未来清单</div>
+    <div onClick={()=>onSetView("future")} style={{background:card,border:`0.5px solid ${border}`,borderRadius:10,padding:"12px 14px",cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:500,color:text}}>{futureTotal} 件事放在未来</div>
+        {nextCount>0&&<div style={{fontSize:12,color:"#185FA5",marginTop:2}}>⚡ 下个月有 {nextCount} 件事快到了</div>}
+      </div>
+      <span style={{fontSize:18,color:sub}}>›</span>
+    </div>
+
+    {/* 空数据提示 */}
+    {cmActive.length===0&&reading.length===0&&<div style={{textAlign:"center",padding:"30px 0",color:sub,fontSize:13}}>
+      <div style={{fontSize:32,marginBottom:8}}>📊</div>
+      <div>课程管理器和 ReadIt 暂无数据</div>
+      <div style={{fontSize:12,marginTop:4}}>打开这两个工具并记录进度后，这里会显示聚合状态</div>
+    </div>}
+  </div>;
+}
+
+/* ═══════════════════════════════════════════
+   PUSH PREVIEW MODAL
+═══════════════════════════════════════════ */
+function PushPreviewModal({items,onConfirm,onClose,darkMode}){
+  const dm=darkMode;
+  const bg=dm?"#1a1728":"#fff";
+  const border=dm?"rgba(255,255,255,.1)":"#e0ddd6";
+  const text=dm?"#f0eaff":"#1a1a1a";
+  const sub=dm?"#a09cc0":"#888";
+  const [sel,setSel]=useState(items.map((_,i)=>i));
+  function toggle(i){setSel(prev=>prev.includes(i)?prev.filter(x=>x!==i):[...prev,i]);}
+  function toggleAll(){setSel(sel.length===items.length?[]:[...items.keys()]);}
+  function confirm(){
+    const chosen=items.filter((_,i)=>sel.includes(i));
+    if(chosen.length)onConfirm(chosen);
+  }
+  const priorityLabel={urgent:"🔴 紧急",today:"🟡 今天",normal:"⚪ 普通"};
+  return(
+    <div style={{position:"fixed",inset:0,background:dm?"rgba(0,0,0,.7)":"rgba(0,0,0,.45)",zIndex:500,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"40px 16px"}}>
+      <div style={{background:bg,borderRadius:14,width:"100%",maxWidth:480,boxShadow:"0 12px 48px rgba(0,0,0,.2)",marginBottom:40}} className="fade-in">
+        {/* 标题栏 */}
+        <div style={{padding:"16px 20px 12px",borderBottom:`0.5px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:600,color:text}}>拉取外部工具任务</div>
+            <div style={{fontSize:12,color:sub,marginTop:2}}>找到 {items.length} 个今日推荐任务，勾选要加入的</div>
+          </div>
+          <button onClick={onClose} style={{fontSize:18,color:sub,background:"none",border:"none",cursor:"pointer"}}>✕</button>
+        </div>
+        {/* 全选行 */}
+        <div style={{padding:"8px 20px",borderBottom:`0.5px solid ${border}`,display:"flex",alignItems:"center",gap:8}}>
+          <input type="checkbox" checked={sel.length===items.length} onChange={toggleAll}
+            style={{width:15,height:15,cursor:"pointer",accentColor:"#185FA5"}}/>
+          <span style={{fontSize:12,color:sub,cursor:"pointer"}} onClick={toggleAll}>
+            {sel.length===items.length?"取消全选":`全选（已选 ${sel.length}/${items.length}）`}
+          </span>
+        </div>
+        {/* 任务列表 */}
+        <div style={{maxHeight:360,overflowY:"auto",padding:"8px 12px"}}>
+          {items.map((item,i)=>{
+            const checked=sel.includes(i);
+            return(
+              <div key={item._key} onClick={()=>toggle(i)}
+                style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 10px",borderRadius:8,
+                  marginBottom:4,cursor:"pointer",background:checked?(dm?"rgba(24,95,165,.12)":"#F0F6FF"):(dm?"rgba(255,255,255,.03)":"#fafafa"),
+                  border:`0.5px solid ${checked?(dm?"rgba(24,95,165,.4)":"#B5D4F4"):(dm?"rgba(255,255,255,.06)":"#f0ede8")}`}}>
+                <input type="checkbox" checked={checked} onChange={()=>toggle(i)} onClick={e=>e.stopPropagation()}
+                  style={{width:15,height:15,marginTop:2,cursor:"pointer",accentColor:"#185FA5",flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:500,color:checked?text:(dm?"#6b6890":"#999"),
+                    textDecoration:checked?"none":"line-through",lineHeight:1.4,wordBreak:"break-all"}}>
+                    {item.title}
+                  </div>
+                  <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap",alignItems:"center"}}>
+                    <span style={{fontSize:11,background:item._sourceBg,color:item._sourceColor,padding:"1px 7px",borderRadius:8,fontWeight:500,flexShrink:0}}>
+                      {item._source}
+                    </span>
+                    {item._reason&&<span style={{fontSize:11,color:sub}}>{item._reason}</span>}
+                    <span style={{fontSize:11,color:sub,marginLeft:"auto"}}>{priorityLabel[item.priority]||""}</span>
+                    {item.estimate&&<span style={{fontSize:11,color:sub}}>⏱{item.estimate}min</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {/* 底部按钮 */}
+        <div style={{padding:"12px 20px",borderTop:`0.5px solid ${border}`,display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={onClose}
+            style={{padding:"8px 16px",border:`0.5px solid ${border}`,background:bg,borderRadius:7,fontSize:13,cursor:"pointer",color:text}}>
+            取消
+          </button>
+          <button onClick={confirm} disabled={sel.length===0}
+            style={{padding:"8px 20px",background:sel.length?"#185FA5":"#ccc",color:"#fff",border:"none",
+              borderRadius:7,fontSize:13,fontWeight:600,cursor:sel.length?"pointer":"default"}}>
+            加入今日 ({sel.length})
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════════════════════════════════════
@@ -4546,17 +4764,32 @@ function HabitTracker({habits,onUpdateHabits}){
 // ═══════════════════════════════════════════
 // Added as a field in TaskDetail - helper function
 function TimeEstimateSelect({value,onChange}){
-  const opts=[
-    {v:"",l:"不设置"},
-    {v:"15",l:"15分钟"},
-    {v:"30",l:"30分钟"},
-    {v:"60",l:"1小时"},
-    {v:"120",l:"2小时+"},
-  ];
+  const presets=[{v:"",l:"不设"},{v:"15",l:"15m"},{v:"30",l:"30m"},{v:"60",l:"1h"},{v:"90",l:"1.5h"},{v:"120",l:"2h"}];
+  const numVal=parseInt(value)||0;
   return(
-    <select value={value||""} onChange={e=>onChange(e.target.value)} style={{width:"100%",padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13}}>
-      {opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-    </select>
+    <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+      <input
+        type="number" min="1" max="480"
+        value={numVal||""}
+        onChange={e=>{const v=e.target.value;onChange(v?String(parseInt(v)||""):"");}}
+        placeholder="分钟"
+        style={{width:60,padding:"6px 8px",border:"0.5px solid #ccc",borderRadius:6,fontSize:13,textAlign:"center"}}
+      />
+      <span style={{fontSize:11,color:"#aaa",flexShrink:0}}>min</span>
+      <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+        {presets.filter(p=>p.v).map(p=>(
+          <button key={p.v} onClick={()=>onChange(p.v)}
+            style={{padding:"3px 6px",fontSize:11,border:`0.5px solid ${value===p.v?"#185FA5":"#ccc"}`,borderRadius:5,
+              background:value===p.v?"#EBF3FB":"#f7f6f3",color:value===p.v?"#185FA5":"#666",cursor:"pointer",fontWeight:value===p.v?600:400}}>
+            {p.l}
+          </button>
+        ))}
+        {value&&<button onClick={()=>onChange("")}
+          style={{padding:"3px 6px",fontSize:11,border:"0.5px solid #ccc",borderRadius:5,background:"#f7f6f3",color:"#aaa",cursor:"pointer"}}>
+          ✕
+        </button>}
+      </div>
+    </div>
   );
 }
 function fmtEstimate(v){
@@ -5342,9 +5575,13 @@ function App(){
   const [projView,setProjView]=useState(null);
   const [showMigration,setShowMigration]=useState(false);
   const [showBrainDump,setShowBrainDump]=useState(false);
+  const [showPushPreview,setShowPushPreview]=useState(false);
+  const [pushPreviewItems,setPushPreviewItems]=useState([]);
   const [focusNowOnly,setFocusNowOnly]=useState(true);
+  const [todayCompact,setTodayCompact]=useState(false); // 今日精简模式：折叠预警横幅
+  const prevNowIdRef=useRef(null); // 追踪上一次NowCard任务id，用于触发吸附动画
   const [timer,setTimer]=useState(null);
-  const [otherOrder,setOtherOrder]=useState([]); // 手动DnD排序的id列表
+  const [otherOrder,setOtherOrder]=useState(()=>lsGet("zj_other_order",[])); // 手动DnD排序的id列表（持久化）
   const [foldDone,setFoldDone]=useState(true); // 已完成列表默认折叠
   const [completingId,setCompletingId]=useState(null); // 正在完成动效的任务id
   const [focusMode,setFocusMode]=useState(false); // 悬浮计时模式（折叠列表）
@@ -5652,10 +5889,10 @@ function App(){
   // 从 course-manager (cm_courses_v1) 和 ReadIt (rd_books_v1) 单向推送今日任务
   function pushExternalTools(){
     const today=todayStr();
-    const added=[];
+    const candidates=[];
     const existingTitles=new Set(tasksRef.current.map(t=>t.title));
 
-    // ① 课程管理器：读取当天 deadline 紧或 doing 状态的条目
+    // ① 课程管理器
     try{
       const cmCourses=lsGet("cm_courses_v1",[]);
       cmCourses.forEach(c=>{
@@ -5673,7 +5910,10 @@ function App(){
             if(shouldPush){
               const title=`[${c.name}] ${item.title}`;
               if(!existingTitles.has(title)){
-                added.push({title,project:2,due:today,priority:isDoing?"urgent":"today",
+                candidates.push({
+                  _key:title,_selected:true,_source:"课程管理器",_sourceColor:"#185FA5",_sourceBg:"#EBF3FB",
+                  _reason:isDoing?"进行中":c.deadline?`截止${new Date(c.deadline).toLocaleDateString("zh-CN",{month:"numeric",day:"numeric"})}前`:"",
+                  title,project:2,due:today,priority:isDoing?"urgent":"today",
                   estimate:item.duration?String(parseInt(item.duration)||30):"",
                   notes:`来自课程管理器 · ${c.name}`});
                 existingTitles.add(title);
@@ -5684,14 +5924,17 @@ function App(){
       });
     }catch(e){console.warn("cm push error",e);}
 
-    // ② ReadIt：读取在读的书，推送每日阅读任务
+    // ② ReadIt
     try{
       const rdBooks=lsGet("rd_books_v1",[]);
       rdBooks.forEach(book=>{
         if(book.status!=="reading")return;
         const title=`[阅读] ${book.title}`;
         if(!existingTitles.has(title)){
-          added.push({title,project:2,due:today,priority:"today",
+          candidates.push({
+            _key:title,_selected:true,_source:"ReadIt",_sourceColor:"#0F6E56",_sourceBg:"#E1F5EE",
+            _reason:`${book.currentPage||0}/${book.totalPages||"?"}页`,
+            title,project:2,due:today,priority:"today",
             estimate:"30",
             notes:`来自 ReadIt · 当前进度 ${book.currentPage||0}/${book.totalPages||"?"} 页`});
           existingTitles.add(title);
@@ -5699,12 +5942,19 @@ function App(){
       });
     }catch(e){console.warn("rd push error",e);}
 
-    if(added.length===0){
-      alert("没有找到新的推送任务\n（已存在的任务不会重复添加）");
+    if(candidates.length===0){
+      alert("没有找到新的可推送任务（已存在的不会重复）");
       return;
     }
-    added.forEach(t=>addTask(t));
-    alert(`✓ 已推送 ${added.length} 个任务到今日`);
+    setPushPreviewItems(candidates);
+    setShowPushPreview(true);
+  }
+  function confirmPush(items){
+    items.forEach(t=>{
+      const{_key,_selected,_source,_sourceColor,_sourceBg,_reason,...task}=t;
+      addTask(task);
+    });
+    setShowPushPreview(false);
   }
   // NEW: save check-in data on a task
   function saveCheckIn(taskId,checkInData){
@@ -5737,6 +5987,22 @@ function App(){
       setTimer(tm=>tm?{...tm,logged:true}:tm);
     }
   },[timer?.left,timer?.running]);
+  // startTime 到点提醒：每分钟检查，到点时底部浮条变色
+  const [startTimeAlert,setStartTimeAlert]=useState(null); // {taskId, title, time}
+  useEffect(()=>{
+    const check=()=>{
+      const now=new Date();
+      const hhmm=String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0");
+      const hit=tasksRef.current.find(t=>!t.done&&t.startTime&&t.startTime===hhmm);
+      if(hit){
+        setStartTimeAlert({taskId:hit.id,title:hit.title,time:hit.startTime});
+        try{SoundEngine.stepStart();}catch(e){}
+      }
+    };
+    check();
+    const id=setInterval(check,30000);// 每30秒检查一次（跨越分钟边界更可靠）
+    return()=>clearInterval(id);
+  },[]);
   function startTimer(task){
     const mins=realisticEstimate(parseInt(task.estimate||"0")||0)||25;
     setTimer({taskId:task.id,total:mins*60,left:mins*60,running:true,logged:false});
@@ -5766,13 +6032,28 @@ function App(){
     const srcId=dragSrcId.current;
     if(!srcId||srcId===targetId){dragSrcId.current=null;return;}
     setOtherOrder(prev=>{
-      const ids=prev.length>0?prev:other.map(t=>t.id);
+      // 用 tasksRef.current 实时算 other，避免闭包 stale 问题
+      const liveOther=tasksRef.current.filter(t=>{
+        if(t.done)return false;
+        const liveFocus=tasksRef.current.filter(x=>!x.done&&(x.priority==="urgent"||x.priority==="today"||isOverdue(x.due))).slice(0,3);
+        return!liveFocus.find(f=>f.id===t.id);
+      });
+      const ids=prev.length>0?prev:liveOther.map(t=>t.id);
       const src=ids.indexOf(srcId);
       const tgt=ids.indexOf(targetId);
-      if(src===-1||tgt===-1)return ids;
+      if(src===-1||tgt===-1){
+        // fallback：把两个id都补进去再排
+        const extended=[...new Set([...ids,...liveOther.map(t=>t.id)])];
+        const s2=extended.indexOf(srcId),t2=extended.indexOf(targetId);
+        if(s2===-1||t2===-1)return prev;
+        extended.splice(s2,1);extended.splice(t2,0,srcId);
+        lsSet("zj_other_order",extended);
+        return extended;
+      }
       const next=[...ids];
       next.splice(src,1);
       next.splice(tgt,0,srcId);
+      lsSet("zj_other_order",next);
       return next;
     });
     dragSrcId.current=null;
@@ -5833,7 +6114,7 @@ function App(){
   const other=tasks.filter(t=>!t.done&&!focus.find(f=>f.id===t.id));
   const done=tasks.filter(t=>t.done);
   const tProps={onToggle:toggleTask,onToggleSub:toggleSub,onExpand:toggleExpand,onAI:aiBreak,onOpen:setDetail,onCheckIn:setCheckInTask,onToggleInProgress:toggleInProgress};
-  const navTop=[{id:"today",l:"今日焦点",i:"ti-sun"},{id:"all",l:"所有任务",i:"ti-list-check"},{id:"calendar",l:"日历",i:"ti-calendar"},{id:"blocking",l:"全局框架",i:"ti-layout-grid"}];
+  const navTop=[{id:"today",l:"今日焦点",i:"ti-sun"},{id:"all",l:"所有任务",i:"ti-list-check"},{id:"calendar",l:"日历",i:"ti-calendar"},{id:"blocking",l:"全局框架",i:"ti-layout-grid"},{id:"dashboard",l:"学习概览",i:"ti-chart-bar"}];
 
   return<div style={{display:"flex",height:"100vh",background:darkMode?"#1c1930":"#f7f6f3",colorScheme:darkMode?"dark":"light",color:darkMode?"#f0eaff":"#1a1a1a",fontSize:14,overflow:"hidden"}}>
     {/* mobile menu btn */}
@@ -5904,26 +6185,69 @@ function App(){
       )}
       <div style={{flex:1,overflowY:"auto",padding:"20px 24px"}}>
         {view==="today"&&<>
-          {/* 练习拖延预警条：躲了好几天的练习，逼一个二选一 */}
+          {/* ── 精简/完整模式切换 + 横幅折叠 ── */}
           {(()=>{
             const stuck=tasks.filter(t=>!t.done&&isPracticeTask(t)&&(t.migrateCount||0)>=2);
-            if(!stuck.length)return null;
-            return<div style={{background:"#FCEBEB",border:"1.5px solid #e8b4b4",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
-              <div style={{fontSize:13,fontWeight:700,color:"#A32D2D",marginBottom:8}}>⚠ 你有 {stuck.length} 个练习躲了好几天</div>
-              {stuck.map(t=>(
-                <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.6)",borderRadius:7,padding:"7px 10px",marginBottom:5}}>
-                  <div style={{flex:1,fontSize:13,color:"#1a1a1a"}}>{t.title}<span style={{fontSize:11,color:"#A32D2D",marginLeft:6}}>推了{t.migrateCount}次</span></div>
-                  <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>做最小版·打卡</button>
-                  <button onClick={()=>{if(window.confirm("承认今天也不会做它，删掉这个练习？"))delTask(t.id);}} style={{padding:"4px 10px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:5,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>砍掉</button>
+            const blockToday=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr());
+            const hasAlerts=stuck.length>0||blockToday.length>0;
+            return hasAlerts&&(
+              <div style={{marginBottom:10}}>
+                {/* 预警折叠控制行 */}
+                <div onClick={()=>setTodayCompact(v=>!v)}
+                  style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:7,
+                    background:darkMode?"rgba(255,255,255,.04)":"#faf9f7",
+                    border:`0.5px solid ${darkMode?"#3d3560":"#e8e5de"}`,cursor:"pointer",marginBottom:todayCompact?0:8,
+                    userSelect:"none"}}>
+                  <span style={{fontSize:11,color:darkMode?"#a09cc0":"#999"}}>
+                    {todayCompact?`▸ 展开提醒 (${stuck.length+blockToday.length})`:
+                    `▾ 折叠提醒 · ${stuck.length>0?stuck.length+"个练习预警":""} ${blockToday.length>0?blockToday.length+"个节点任务":""}`}
+                  </span>
+                  <span style={{marginLeft:"auto",fontSize:10,color:darkMode?"#6b6890":"#bbb"}}>
+                    {todayCompact?"点击展开":"点击折叠"}
+                  </span>
                 </div>
-              ))}
-              <div style={{fontSize:11,color:"#A32D2D",opacity:.75,marginTop:2}}>规则：要么现在做最小版本，要么承认不做、删掉。别让它一直挂着。</div>
-            </div>;
+                {!todayCompact&&<>
+                  {/* 练习拖延预警条 */}
+                  {stuck.length>0&&<div style={{background:"#FCEBEB",border:"1.5px solid #e8b4b4",borderRadius:10,padding:"12px 16px",marginBottom:8}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#A32D2D",marginBottom:8}}>⚠ 你有 {stuck.length} 个练习躲了好几天</div>
+                    {stuck.map(t=>(
+                      <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.6)",borderRadius:7,padding:"7px 10px",marginBottom:5}}>
+                        <div style={{flex:1,fontSize:13,color:"#1a1a1a"}}>{t.title}<span style={{fontSize:11,color:"#A32D2D",marginLeft:6}}>推了{t.migrateCount}次</span></div>
+                        <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>做最小版·打卡</button>
+                        <button onClick={()=>{if(window.confirm("承认今天也不会做它，删掉这个练习？"))delTask(t.id);}} style={{padding:"4px 10px",background:"#fff",color:"#A32D2D",border:"0.5px solid #e8b4b4",borderRadius:5,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>砍掉</button>
+                      </div>
+                    ))}
+                    <div style={{fontSize:11,color:"#A32D2D",opacity:.75,marginTop:2}}>规则：要么现在做最小版本，要么承认不做、删掉。别让它一直挂着。</div>
+                  </div>}
+                  {/* Block tasks today banner */}
+                  {blockToday.length>0&&<div style={{background:"linear-gradient(135deg,#FAEEDA,#FFF5E0)",border:"1.5px solid #f0c070",borderRadius:10,padding:"12px 16px",marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                      <span style={{fontSize:12,fontWeight:700,color:"#854F0B"}}>🔨 今日节点任务 · 完成后必须打卡</span>
+                      <span style={{fontSize:11,color:"#854F0B",opacity:.7}}>{blockToday.length}个</span>
+                    </div>
+                    {blockToday.map(t=>{
+                      const micro=t.notes?.match(/📌 今日微任务：(.+)/)?.[1];
+                      const output=t.notes?.match(/✅ 产出要求：(.+)/)?.[1];
+                      return<div key={t.id} style={{background:"rgba(255,255,255,.6)",borderRadius:7,padding:"8px 10px",marginBottom:4,display:"flex",gap:10,alignItems:"flex-start"}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,fontWeight:500,color:"#1a1a1a",marginBottom:2}}>{t.title.replace(/^\[Day \d+\] /,"")}</div>
+                          {micro&&<div style={{fontSize:11,color:"#854F0B"}}>📌 {micro}</div>}
+                          {output&&<div style={{fontSize:11,color:"#0F6E56",marginTop:2}}>📤 {output}</div>}
+                        </div>
+                        <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>打卡</button>
+                      </div>;
+                    })}
+                  </div>}
+                </>}
+              </div>
+            );
           })()}
-          {/* 现在就做这一件：屏幕上只给一个答案 */}
+          {/* 现在就做这一件：NowCard（加吸附动画） */}
           {(()=>{
             const fo=coachOrder(focus.filter(t=>!t.done));
             const nowT=fo[0];if(!nowT)return null;
+            const isNewTask=prevNowIdRef.current!==null&&prevNowIdRef.current!==nowT.id;
+            prevNowIdRef.current=nowT.id;
             const rest=fo.slice(1);
             const prac=isPracticeTask(nowT);
             const inProg=nowT.inProgress;
@@ -5936,7 +6260,7 @@ function App(){
             const cardBorder=darkMode?"#3d3560":"#D6DEFF";
             const cardTextMain=darkMode?"#f0eaff":"#1a1a1a";
             const cardTextSub=darkMode?"#a09cc0":"#999";
-            return<div style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:darkMode?"0 2px 10px rgba(0,0,0,.2)":"0 2px 10px rgba(0,0,0,.04)"}}>
+            return<div className={isNewTask?"nowcard-snap":""} style={{background:cardBg,border:`1.5px solid ${cardBorder}`,borderRadius:14,padding:"16px 18px",marginBottom:14,boxShadow:darkMode?"0 2px 10px rgba(0,0,0,.2)":"0 2px 10px rgba(0,0,0,.04)"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <span style={{fontSize:11,fontWeight:700,letterSpacing:".06em",color:inProg?"#0F6E56":prac?"#854F0B":"#185FA5"}}>{inProg?"▶ 进行中":"🎯 现在就做这一件"}</span>
                 <button onClick={()=>setFocusNowOnly(v=>!v)} style={{fontSize:11,color:"#888",background:"none",border:"none",cursor:"pointer"}}>{focusNowOnly?"显示全部 ▾":"只看当前 ▴"}</button>
@@ -5948,7 +6272,6 @@ function App(){
               </div>
               {(()=>{const nextStep=nowT.subtasks?.find((s,i)=>!nowT.subtaskDone[i])||nowT.subtasks?.[0];return nextStep?(<div style={{background:darkMode?"rgba(29,158,117,.1)":"rgba(255,255,255,0.7)",borderLeft:"2px solid #5DCAA5",borderRadius:"0 6px 6px 0",padding:"5px 9px",marginBottom:10}}><div style={{fontSize:10,color:"#5DCAA5",fontWeight:500,marginBottom:1}}>下一步</div><div style={{fontSize:12,color:darkMode?"#5DCAA5":"#0F6E56",lineHeight:1.4}}>{nextStep}</div></div>):null;})()}
               {prac&&<div style={{fontSize:12,color:darkMode?"#a09cc0":"#666",background:darkMode?"rgba(255,255,255,.04)":"#f7f7f7",borderRadius:8,padding:"8px 10px",marginBottom:10,lineHeight:1.55,border:`0.5px solid ${darkMode?"#3d3560":"#e8e8e8"}`}}>练习类任务：先做最小版本，2分钟就行。</div>}
-              {/* 专注计时进度条 */}
               {tm&&<div style={{background:darkMode?"rgba(255,255,255,.06)":"rgba(0,0,0,.04)",borderRadius:10,padding:"10px 12px",marginBottom:8}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
                   <span style={{fontSize:22,fontWeight:700,color:tm.left===0?"#0F6E56":cardTextMain,fontVariantNumeric:"tabular-nums"}}>{tm.left===0?"⏰ 时间到！":mmss(tm.left)}</span>
@@ -5958,7 +6281,6 @@ function App(){
                   <div style={{height:"100%",width:pct+"%",background:tm.left===0?"#FBBF24":"#185FA5",borderRadius:3,transition:"width 1s linear"}}/>
                 </div>
               </div>}
-              {/* NowCard 主操作区 */}
               {!tm&&<div style={{display:"flex",gap:8,marginTop:4}}>
                 <button onClick={()=>startTimer(nowT)}
                   style={{flex:2,padding:"12px",background:"#185FA5",color:"#fff",border:"none",
@@ -5984,29 +6306,6 @@ function App(){
               {rest.length>0&&<div style={{fontSize:11,color:darkMode?"#6b6890":"#999",marginTop:10}}>接下来：{rest.map(t=>t.title).join(" → ")}</div>}
             </div>;
           })()}
-          {/* Block tasks today banner */}
-          {(()=>{
-            const blockToday=tasks.filter(t=>!t.done&&t.title.startsWith("[Day ")&&t.notes?.includes("📌 今日微任务")&&t.due===todayStr());
-            if(!blockToday.length)return null;
-            return<div style={{background:"linear-gradient(135deg,#FAEEDA,#FFF5E0)",border:"1.5px solid #f0c070",borderRadius:10,padding:"12px 16px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{fontSize:12,fontWeight:700,color:"#854F0B"}}>🔨 今日节点任务 · 完成后必须打卡</span>
-                <span style={{fontSize:11,color:"#854F0B",opacity:.7}}>{blockToday.length}个</span>
-              </div>
-              {blockToday.map(t=>{
-                const micro=t.notes?.match(/📌 今日微任务：(.+)/)?.[1];
-                const output=t.notes?.match(/✅ 产出要求：(.+)/)?.[1];
-                return<div key={t.id} style={{background:"rgba(255,255,255,.6)",borderRadius:7,padding:"8px 10px",marginBottom:4,display:"flex",gap:10,alignItems:"flex-start"}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:500,color:"#1a1a1a",marginBottom:2}}>{t.title.replace(/^\[Day \d+\] /,"")}</div>
-                    {micro&&<div style={{fontSize:11,color:"#854F0B"}}>📌 {micro}</div>}
-                    {output&&<div style={{fontSize:11,color:"#0F6E56",marginTop:2}}>📤 {output}</div>}
-                  </div>
-                  <button onClick={()=>setCheckInTask(t)} style={{padding:"4px 10px",background:"#854F0B",color:"#fff",border:"none",borderRadius:5,fontSize:11,cursor:"pointer",fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>打卡</button>
-                </div>;
-              })}
-            </div>;
-          })()}
           {/* 控制栏：统计数据 + Routine 入口合并 */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:12,marginBottom:12,borderBottom:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`}}>
             <div style={{fontSize:13,color:darkMode?"#a09cc0":"#666",display:"flex",alignItems:"center",gap:0}}>
@@ -6022,7 +6321,6 @@ function App(){
               ):null;})()}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-              {/* 外部工具推送按钮 */}
               <button onClick={pushExternalTools} title="从课程管理器和ReadIt拉取今日推荐任务"
                 style={{display:"flex",alignItems:"center",gap:4,padding:"5px 10px",background:darkMode?"rgba(15,110,86,.15)":"#E8F6F2",border:`0.5px solid ${darkMode?"rgba(15,110,86,.4)":"#A8DDC8"}`,borderRadius:7,cursor:"pointer",fontSize:11,color:darkMode?"#5DCAA5":"#0F6E56",fontWeight:500}}>
                 <i className="ti ti-download" style={{fontSize:13,lineHeight:1}}/>
@@ -6034,9 +6332,6 @@ function App(){
               </button>
             </div>
           </div>
-          {null/* 估时提示已合并入统计行 */}
-          {null/* 习惯追踪已隐藏 */}
-          {null/* 番茄统计已删除 */}
           {!focusNowOnly&&<div style={{background:darkMode?"#1e1a30":"#fff",border:`0.5px solid ${darkMode?"#3d3560":"#e0ddd6"}`,borderRadius:12,padding:"16px 20px",marginBottom:20}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <span style={{fontSize:12,fontWeight:500,color:"#185FA5",background:"#E6F1FB",padding:"3px 10px",borderRadius:6}}>⚡ 按顺序做（前面先做）</span>
@@ -6082,7 +6377,29 @@ function App(){
           {done.length>0&&<><div style={{fontSize:13,fontWeight:500,margin:"18px 0 10px",color:"#bbb"}}>已完成</div>{done.map(t=><TaskRow key={t.id} task={t} {...tProps}/>)}</>}
         </>}
         {view==="calendar"&&<CalendarView tasks={tasks} onAddTask={addTask} journal={journal} onJournalUpdate={setJournalAndSync}/>}
-        {view==="future"&&<FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>}
+        {view==="future"&&<>
+          {/* 未来清单时间感知：临近月份提醒 */}
+          {(()=>{
+            const now=new Date();
+            const nextMk=monthKey(now.getFullYear(),now.getMonth()+2); // 下个月key
+            const nextItems=(futureLog[nextMk]||[]);
+            const daysToNext=new Date(now.getFullYear(),now.getMonth()+1,1)-now;
+            const daysLeft=Math.ceil(daysToNext/86400000);
+            if(nextItems.length===0||daysLeft>10)return null;
+            return<div style={{background:"#EBF3FB",border:"0.5px solid #B5D4F4",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#185FA5",marginBottom:2}}>📅 下个月还有 {nextItems.length} 件事</div>
+                <div style={{fontSize:12,color:"#666"}}>{nextItems.slice(0,2).map(i=>i.text).join("、")}{nextItems.length>2?` 等${nextItems.length}件`:""}</div>
+              </div>
+              <button onClick={()=>{nextItems.forEach(item=>addFutureToTasks(item.text,nextMk));setFutureLogAndSync({...futureLog,[nextMk]:[]});}}
+                style={{padding:"6px 14px",background:"#185FA5",color:"#fff",border:"none",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+                全部迁入任务
+              </button>
+            </div>;
+          })()}
+          <FutureLog futureLog={futureLog} onUpdate={setFutureLogAndSync} onMoveToTasks={addFutureToTasks}/>
+        </>}
+        {view==="dashboard"&&<DashboardView tasks={tasks} courses={courses} futureLog={futureLog} darkMode={darkMode} onSetView={setView}/>}
         {view==="weekly"&&<WeeklyView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask}/>}
         {view==="learning"&&<LearningView courses={courses} onUpdate={updateCourse} onAdd={addCourse} onArchive={archiveCourse} onAddTaskToBoard={addTask} geminiKey={geminiKey} onAddPomEntry={addPomEntry} tasks={tasks} onToggleSub={toggleSub} inbox={inbox} onSaveInbox={saveLearningInbox}/>}
         {view==="blocking"&&<BlockingView tasks={tasks} onUpdate={saveDetail} onAddTask={addTask} geminiKey={geminiKey} onSaveLayers={bl=>{setBlockingLayers(bl);blockingLayersRef.current=bl;triggerSave();}}/>}
@@ -6116,6 +6433,7 @@ function App(){
     {detail&&<TaskDetail task={detail} onClose={()=>setDetail(null)} onSave={saveDetail} onDelete={delTask}/>}
     {showMigration&&<MigrationPanel tasks={tasks} onMigrate={handleMigrate} onClose={()=>setShowMigration(false)}/>}
     {showBrainDump&&<BrainDump onClose={()=>setShowBrainDump(false)} onAddTasks={addBrainTasks} apiKey={geminiKey} courses={courses} onAddIdeas={addBrainIdeas}/>}
+    {showPushPreview&&<PushPreviewModal items={pushPreviewItems} onConfirm={confirmPush} onClose={()=>setShowPushPreview(false)} darkMode={darkMode}/>}
     {showMonthlyReview&&<MonthlyReview tasks={tasks} onClose={()=>setShowMonthlyReview(false)}/>}
     {showLaunch&&<LaunchRitual tasks={tasks} onDismiss={()=>setShowLaunch(false)} geminiKey={geminiKey} onAddTask={addTask}/>}
     {showReview&&<ReviewPanel courses={courses} onUpdateNote={updateCourseNote} onClose={()=>setShowReview(false)}/>}
@@ -6127,6 +6445,30 @@ function App(){
     {activeRoutine&&<RoutineExecutor routine={activeRoutine} tasks={tasks} darkMode={darkMode} onTaskDone={(id,extra)=>routineTaskDone(id,extra)} onComplete={()=>setActiveRoutine(null)} onExit={()=>setActiveRoutine(null)}/>}
 
     {null/* 吸底按钮已移入NowCard */}
+    {/* ── startTime 到点提醒横幅 ── */}
+    {startTimeAlert&&!timer&&(()=>{
+      const t=tasks.find(x=>x.id===startTimeAlert.taskId);
+      if(!t||t.done){setStartTimeAlert(null);return null;}
+      return(
+        <div style={{position:"fixed",bottom:0,left:52,right:0,zIndex:300,
+          background:"linear-gradient(90deg,#185FA5,#1D9E75)",color:"#fff",
+          display:"flex",alignItems:"center",gap:0,
+          boxShadow:"0 -2px 16px rgba(24,95,165,.35)"}}>
+          <div style={{flex:1,padding:"10px 16px",minWidth:0}}>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.7)",marginBottom:1}}>🕐 {startTimeAlert.time} 到点了</div>
+            <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{startTimeAlert.title}</div>
+          </div>
+          <button onClick={()=>{const task=tasks.find(x=>x.id===startTimeAlert.taskId);if(task)startTimer(task);setStartTimeAlert(null);}}
+            style={{padding:"8px 16px",background:"rgba(255,255,255,.2)",color:"#fff",border:"none",borderRadius:6,fontSize:12,fontWeight:700,cursor:"pointer",margin:"0 8px",flexShrink:0}}>
+            ▶ 开始
+          </button>
+          <button onClick={()=>setStartTimeAlert(null)}
+            style={{padding:"8px 10px",background:"none",color:"rgba(255,255,255,.6)",border:"none",cursor:"pointer",fontSize:16,flexShrink:0,marginRight:8}}>
+            ✕
+          </button>
+        </div>
+      );
+    })()}
     {/* ── Focus Mode 悬浮条 ── */}
     {timer&&(()=>{
       const nowT=tasks.find(t=>t.id===timer.taskId);
